@@ -1933,6 +1933,41 @@ function canManageWorkerBadges(){
   return ['admin','project_manager','region','office'].includes(profile?.role);
 }
 
+
+function postWorkerMediaFormInsideWindow(popup, fields){
+  if(!popup || popup.closed){
+    throw new Error('نافذة البطاقة غير متاحة');
+  }
+
+  const doc = popup.document;
+
+  doc.open();
+  doc.write(
+    '<!doctype html><html lang="ar" dir="rtl">' +
+    '<head><meta charset="utf-8"><title>جارِ تجهيز البطاقة...</title></head>' +
+    '<body style="font-family:Arial,Tahoma,sans-serif;background:#f5f7f7;padding:35px;color:#17304f">' +
+    '<h3>🪪 جارِ تجهيز البطاقة التعريفية...</h3>' +
+    '<p>برجاء الانتظار لحظات.</p>' +
+    '</body></html>'
+  );
+  doc.close();
+
+  const form = doc.createElement('form');
+  form.method = 'POST';
+  form.action = WORKER_MEDIA_APPS_SCRIPT_URL;
+
+  Object.entries(fields).forEach(([name, value]) => {
+    const input = doc.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value ?? '';
+    form.appendChild(input);
+  });
+
+  doc.body.appendChild(form);
+  form.submit();
+}
+
 async function issueAndPrintWorkerBadge(assignmentId){
   if(!canManageWorkerBadges()){
     return showToast('غير مصرح لك بإصدار بطاقة تعريفية', 'danger');
@@ -1943,41 +1978,81 @@ async function issueAndPrintWorkerBadge(assignmentId){
   try {
     assertWorkerMediaAppsScriptReady();
 
-    popup = window.open('', 'worker_badge_' + Date.now());
+    // نفتح النافذة فور ضغطة المستخدم حتى لا يمنعها المتصفح.
+    popup = window.open('', '_blank');
 
     if(!popup){
-      throw new Error('المتصفح منع فتح نافذة البطاقة');
+      throw new Error('المتصفح منع فتح نافذة البطاقة. اسمح بالنوافذ المنبثقة لهذا الموقع.');
     }
 
+    popup.document.open();
     popup.document.write(
-      '<!doctype html><html lang="ar" dir="rtl"><body style="font-family:Arial;padding:30px">' +
-      '<p>جارِ تجهيز البطاقة التعريفية...</p></body></html>'
+      '<!doctype html><html lang="ar" dir="rtl">' +
+      '<head><meta charset="utf-8"><title>جارِ تجهيز البطاقة...</title></head>' +
+      '<body style="font-family:Arial,Tahoma,sans-serif;padding:32px;background:#f5f7f7;color:#183556">' +
+      '<h3>🪪 جارِ تجهيز البطاقة التعريفية...</h3>' +
+      '<p>يتم إنشاء تذكرة طباعة آمنة لمرة واحدة.</p>' +
+      '</body></html>'
     );
     popup.document.close();
 
+    // تأكد من وجود بطاقة سارية/أنشئها أولًا.
     const badge = await callRPC('issue_worker_badge', {
       p_assignment_id: assignmentId
     });
 
     if(!badge?.token){
-      throw new Error('تعذر إصدار رقم البطاقة');
+      throw new Error('تعذر إصدار البطاقة');
     }
 
-    const { data: { session: currentSession } } = await sb.auth.getSession();
+    // أنشئ تذكرة طباعة مستقلة عن QR.
+    const ticket = await callRPC('create_worker_badge_print_ticket', {
+      p_assignment_id: assignmentId
+    });
 
-    if(!currentSession?.access_token){
-      throw new Error('انتهت جلسة الدخول');
+    if(!ticket?.print_ticket){
+      throw new Error('تعذر إنشاء تذكرة الطباعة');
     }
 
-    postWorkerMediaForm({
-      action: 'print_badge',
-      access_token: currentSession.access_token,
-      token: badge.token
-    }, popup.name);
+    const printUrl =
+      WORKER_MEDIA_APPS_SCRIPT_URL +
+      '?ticket=' +
+      encodeURIComponent(ticket.print_ticket);
+
+    // رابط الطباعة أصبح يعتمد على ticket فقط، بدون action.
+    // نعرض مرحلة انتقال قصيرة ثم ننقل النافذة مباشرة.
+    popup.document.open();
+    popup.document.write(
+      '<!doctype html><html lang="ar" dir="rtl">' +
+      '<head><meta charset="utf-8"><title>جارِ فتح البطاقة...</title></head>' +
+      '<body style="font-family:Arial,Tahoma,sans-serif;padding:32px;background:#f5f7f7;color:#183556">' +
+      '<h3>🪪 تم تجهيز تذكرة الطباعة</h3>' +
+      '<p>جارِ فتح البطاقة...</p>' +
+      '<p><a id="openBadge" href="' + esc(printUrl) + '">اضغط هنا إذا لم تفتح البطاقة تلقائيًا</a></p>' +
+      '</body></html>'
+    );
+    popup.document.close();
+
+    // استخدام href مباشر بدل replace.
+    popup.location.href = printUrl;
 
   } catch(err) {
-    if(popup) popup.close();
-    showToast(err.message, 'danger');
+    if(popup && !popup.closed){
+      try {
+        popup.document.open();
+        popup.document.write(
+          '<!doctype html><html lang="ar" dir="rtl">' +
+          '<head><meta charset="utf-8"><title>تعذر تجهيز البطاقة</title></head>' +
+          '<body style="font-family:Arial,Tahoma,sans-serif;padding:32px;background:#fff;color:#a03628">' +
+          '<h3>تعذر تجهيز البطاقة</h3>' +
+          '<p>' + esc(err.message || 'خطأ غير معروف') + '</p>' +
+          '</body></html>'
+        );
+        popup.document.close();
+      } catch(_) {}
+    }
+
+    showToast(err.message || 'تعذر تجهيز البطاقة', 'danger');
   }
 }
 
@@ -2579,7 +2654,7 @@ function renderApp(){
     <div id="sidebar">
       <div class="brand">
         <div class="brand-title">منصة العمل الموحد</div>
-        <div class="brand-sub">للأبحاث والدراسات الميدانية — V10.2.5</div>
+        <div class="brand-sub">للأبحاث والدراسات الميدانية — V10.2.8</div>
       </div>
       <nav id="navList"></nav>
       <div class="sidebar-foot">
