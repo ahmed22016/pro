@@ -1259,7 +1259,7 @@ td{
 <button class="mobile-toggle" onclick="document.getElementById('sidebar')?.classList.toggle('open')">☰</button>
 <div class="toast" id="toast"></div>
 <div id="modals-container"></div>
-<div class="rc-review-banner">V11.0-RC1M · نسخة مراجعة قبل النشر · V10.2.10 محفوظة للرجوع</div>
+<div class="rc-review-banner">V11.0-RC1O · نسخة مراجعة قبل النشر · V10.2.10 محفوظة للرجوع</div>
 
 <script>
 /* ============================================================
@@ -1281,6 +1281,67 @@ let govList = [];
 let regionsCache = [];
 let regionGovMap = {};
 let districtsCache = {};
+
+let districtsCacheLoadedFull = false;
+let districtsCacheRowCount = 0;
+
+async function loadAllDistrictsPagedV11(force=false){
+  if(districtsCacheLoadedFull && !force){
+    return districtsCacheRowCount;
+  }
+
+  const expectedRaw = await callRPC('get_frame_admin_directory_count_v11',{});
+  const expected = Number(expectedRaw || 0);
+
+  if(!Number.isFinite(expected) || expected < 1){
+    throw new Error('تعذر تحديد عدد سجلات الدليل الإداري من قاعدة البيانات');
+  }
+
+  const pageSize = 1000;
+  const allRows = [];
+
+  for(let offset=0; offset<expected; offset+=pageSize){
+    const page = await callRPC('get_frame_admin_directory_page_v11',{
+      p_offset: offset,
+      p_limit: pageSize
+    });
+
+    const rows = page || [];
+    allRows.push(...rows);
+
+    if(rows.length===0 && offset<expected){
+      throw new Error(
+        `توقف تحميل الدليل الإداري عند ${fmtNum(offset)} من ${fmtNum(expected)} سجل`
+      );
+    }
+  }
+
+  if(allRows.length !== expected){
+    throw new Error(
+      `تحميل الدليل الإداري غير مكتمل: تم استرجاع ${fmtNum(allRows.length)} من ${fmtNum(expected)} سجل`
+    );
+  }
+
+  const nextCache = {};
+  allRows.forEach(d => {
+    const govId = Number(d.governorate_id);
+    if(!nextCache[govId]) nextCache[govId] = [];
+    nextCache[govId].push({
+      id: d.district_id,
+      name: d.vel_name,
+      center: d.center_name,
+      centerCode: d.center_code,
+      velCode: d.vel_code
+    });
+  });
+
+  districtsCache = nextCache;
+  districtsCacheRowCount = allRows.length;
+  districtsCacheLoadedFull = true;
+
+  return districtsCacheRowCount;
+}
+
 let pendingCounts = { pending_seating: 0, pending_structure: 0, pending_edit_requests: 0, pending_workforce: 0 };
 
 
@@ -2678,25 +2739,15 @@ async function loadProfile(){
     console.warn('Regions are not available:', regionsError.message);
   }
   
-  // تحميل الأقسام
-const { data: allDistricts } = await sb.from('districts')
-  .select('id, governorate_id, name, center_code, center_name, vel_code, vel_name')
-  .order('governorate_id')
-  .order('center_code')
-  .order('vel_code');
-  
-districtsCache = {};
-(allDistricts || []).forEach(d => {
-  const govId = d.governorate_id;
-  if(!districtsCache[govId]) districtsCache[govId] = [];
-  districtsCache[govId].push({
-    id: d.id,
-    name: d.vel_name || d.name,
-    center: d.center_name,
-    centerCode: d.center_code,
-    velCode: d.vel_code
-  });
-});
+  // تحميل الدليل الإداري كاملًا على صفحات.
+  // Supabase/PostgREST قد يحد نتيجة الطلب الواحد إلى 1000 صف.
+  try{
+    await loadAllDistrictsPagedV11(true);
+  }catch(e){
+    districtsCache = {};
+    districtsCacheLoadedFull = false;
+    console.warn('Full districts directory could not be loaded:', e.message);
+  }
   
   await refreshPendingCounts();
   renderApp();
@@ -2733,7 +2784,7 @@ function renderApp(){
     <div id="sidebar">
       <div class="brand">
         <div class="brand-title">منصة العمل الموحد</div>
-        <div class="brand-sub">للأبحاث والدراسات الميدانية — V11.0-RC1M</div>
+        <div class="brand-sub">للأبحاث والدراسات الميدانية — V11.0-RC1O</div>
       </div>
       <nav id="navList"></nav>
       <div class="sidebar-foot">
@@ -8010,7 +8061,7 @@ async function renderProjectDetail(){
         <div class="flex-between" style="align-items:flex-start;">
           <div>
             <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;">
-              <div class="workspace-tag">Project Workspace · V11 RC1M</div>
+              <div class="workspace-tag">Project Workspace · V11 RC1O</div>
 
               ${state.projectTab!=='overview'?`
                 <button class="btn btn-outline btn-sm"
@@ -13791,6 +13842,2180 @@ async function renderProjectLogV11Tab(proj){
       `}
     `;
   }catch(err){showError('projectBody',err.message);}
+}
+
+
+
+/* ===================================================================
+ * V11.0-RC1N — FRAME + BULK ASSIGNMENT UI
+ * -------------------------------------------------------------------
+ * Backend authority:
+ *   - scoped reads: get_project_frame_v11
+ *   - import: staged/chunked RPC workflow
+ *   - assignment: bulk RPCs
+ * Direct work_units mutation is intentionally not used by this V11 tab.
+ * =================================================================== */
+
+const frameV11 = {
+  rows: [],
+  selected: new Set(),
+  offset: 0,
+  limit: 100,
+  total: 0,
+  canManageImport: false,
+  canAssign: false,
+  activeBatchId: null,
+  importFileName: null,
+  importErrors: [],
+  filters: {
+    governorateId: '',
+    centerCode: '',
+    velCode: '',
+    areaCode: '',
+    assignmentState: 'all',
+    search: ''
+  }
+};
+
+function frameCycleIdV11(proj){
+  return proj?.project_mode === 'recurring' ? (state.activeCycleId || null) : null;
+}
+
+function frameCycleReadyV11(proj){
+  return proj?.project_mode !== 'recurring' || !!state.activeCycleId;
+}
+
+function frameExcelPickV11(row, keys){
+  for(const k of keys){
+    if(Object.prototype.hasOwnProperty.call(row, k)){
+      const v = row[k];
+      if(v !== null && v !== undefined) return String(v).trim();
+    }
+  }
+  return '';
+}
+
+function frameNormalizeSmallCodeV11(v, len){
+  let s = String(v ?? '').trim().replace(/\.0+$/,'');
+  if(/^\d+$/.test(s) && s.length < len) s = s.padStart(len,'0');
+  return s;
+}
+
+function mapFrameExcelRowV11(row){
+  return {
+    governorate_code: frameNormalizeSmallCodeV11(
+      frameExcelPickV11(row,['كود المحافظة','governorate_code']), 2
+    ),
+    center_code: frameNormalizeSmallCodeV11(
+      frameExcelPickV11(row,[
+        'كود القسم/المركز','كود القسم و المركز','كود القسم والمركز','center_code'
+      ]), 4
+    ),
+    vel_code: frameNormalizeSmallCodeV11(
+      frameExcelPickV11(row,[
+        'كود الشياخة/القرية','كود الشياخه و القريه','كود الشياخة والقرية','vel_code'
+      ]), 6
+    ),
+    enumerator_area_code: frameNormalizeSmallCodeV11(
+      frameExcelPickV11(row,[
+        'رقم منطقة المعاون','كود منطقة المعاون','enumerator_area_code'
+      ]), 9
+    ),
+    spatial_plot_no: frameExcelPickV11(row,[
+      'رقم القطعة المساحية','رقم القطعه المساحيه','spatial_plot_no'
+    ]),
+    building_number: frameNormalizeSmallCodeV11(
+      frameExcelPickV11(row,[
+        'رقم المبنى داخل منطقة المعاون','رقم المبني داخل منطقة المعاون','building_number'
+      ]), 4
+    ),
+    building_repeat: frameNormalizeSmallCodeV11(
+      frameExcelPickV11(row,[
+        'تكرار رقم المبنى','تكرار رقم المبني','building_repeat'
+      ]), 3
+    ),
+    building_census_code: frameExcelPickV11(row,[
+      'رقم تعداد المبنى','رقم تعداد المبني','building_census_code'
+    ]).replace(/\.0+$/,''),
+    floor_level: frameExcelPickV11(row,[
+      'مستوى الدور','مستوي الدور','floor_level'
+    ]).toUpperCase(),
+    floor_number: frameNormalizeSmallCodeV11(
+      frameExcelPickV11(row,['رقم الدور','floor_number']), 3
+    ),
+    unit_number: frameNormalizeSmallCodeV11(
+      frameExcelPickV11(row,[
+        'رقم الوحدة داخل الدور','رقم الوحده داخل الدور','unit_number'
+      ]), 2
+    ),
+    establishment_number: frameNormalizeSmallCodeV11(
+      frameExcelPickV11(row,[
+        'رقم المنشأة داخل الوحدة','رقم المنشأه داخل الوحده','establishment_number'
+      ]), 2
+    ),
+    census_entity_code: frameExcelPickV11(row,[
+      'رقم الأسرة/المنشأة من التعداد',
+      'رقم الاسره او المنشاه من التعداد',
+      'رقم تعداد الوحدة',
+      'census_entity_code'
+    ]).toUpperCase().replace(/[^0-9A-Z]/g,''),
+    frame_serial: frameExcelPickV11(row,[
+      'مسلسل الأسرة/المنشأة بالإطار',
+      'مسلسل الاسره او المنشاه بالاطار',
+      'مسلسل الإطار',
+      'frame_serial'
+    ]),
+    entity_name: frameExcelPickV11(row,[
+      'اسم الأسرة/المنشأة','اسم الاسره او المنشاه','entity_name'
+    ]),
+    detailed_address: frameExcelPickV11(row,[
+      'العنوان بالتفصيل','detailed_address'
+    ]),
+    notes: frameExcelPickV11(row,['ملاحظات','notes'])
+  };
+}
+
+function frameFilterParamsV11(proj, offset=0, limit=frameV11.limit){
+  const f = frameV11.filters;
+  return {
+    p_project_id: proj.id,
+    p_cycle_id: frameCycleIdV11(proj),
+    p_governorate_id: f.governorateId ? Number(f.governorateId) : null,
+    p_center_code: f.centerCode || null,
+    p_vel_code: f.velCode || null,
+    p_enumerator_area_code: f.areaCode || null,
+    p_assignment_state: f.assignmentState || 'all',
+    p_search: f.search || null,
+    p_offset: offset,
+    p_limit: limit
+  };
+}
+
+function readFrameFiltersV11(){
+  const gov = document.getElementById('fr_gov');
+  const center = document.getElementById('fr_center');
+  const vel = document.getElementById('fr_vel');
+  const area = document.getElementById('fr_area');
+  const ast = document.getElementById('fr_assignment_state');
+  const search = document.getElementById('fr_search');
+
+  if(gov) frameV11.filters.governorateId = gov.value;
+  if(center) frameV11.filters.centerCode = center.value.trim();
+  if(vel) frameV11.filters.velCode = vel.value.trim();
+  if(area) frameV11.filters.areaCode = area.value.trim();
+  if(ast) frameV11.filters.assignmentState = ast.value;
+  if(search) frameV11.filters.search = search.value.trim();
+}
+
+function resetFrameSelectionV11(){
+  frameV11.selected.clear();
+}
+
+function frameStatusArV11(v){
+  const m = {
+    pending:'غير مسند',
+    assigned:'مسند',
+    in_progress:'جاري التنفيذ',
+    completed:'مكتمل',
+    cancelled:'ملغي'
+  };
+  return m[v] || v || '—';
+}
+
+function frameStatusBadgeV11(v){
+  if(v==='completed') return '<span class="badge badge-success">مكتمل</span>';
+  if(v==='in_progress') return '<span class="badge badge-amber">جاري التنفيذ</span>';
+  if(v==='assigned') return '<span class="badge badge-navy">مسند</span>';
+  if(v==='cancelled') return '<span class="badge badge-danger">ملغي</span>';
+  return '<span class="badge">غير مسند</span>';
+}
+
+/* Override the old project "units" renderer.
+   Project tab "operations" already routes to renderProjectUnitsTab(). */
+async function renderProjectUnitsTab(proj){
+  const body = document.getElementById('projectBody');
+
+  if(!frameCycleReadyV11(proj)){
+    body.innerHTML = `
+      <div class="empty-rich">
+        <div class="icon">🗂️</div>
+        <h3>اختر دورة التشغيل أولًا</h3>
+        <p>إطار المشروع المتكرر مرتبط بدورة تشغيل محددة حتى لا تختلط الإطارات بين الدورات.</p>
+      </div>`;
+    return;
+  }
+
+  body.innerHTML = `
+    <div class="empty-rich">
+      <div class="icon"><span class="spinner"></span></div>
+      <h3>جارِ تحميل إطار العمل...</h3>
+    </div>`;
+
+  try{
+    const [statsRows, canManage] = await Promise.all([
+      callRPC('get_project_frame_stats_v11',{
+        p_project_id: proj.id,
+        p_cycle_id: frameCycleIdV11(proj)
+      }),
+      callRPC('can_manage_project_frame_v11',{
+        p_project_id: proj.id
+      }).catch(()=>false)
+    ]);
+
+    frameV11.canManageImport = !!canManage;
+    frameV11.canAssign =
+      !!canManage || ['admin','project_manager','region','office'].includes(profile?.role);
+
+    const stats = Array.isArray(statsRows) ? (statsRows[0] || {}) : (statsRows || {});
+
+    body.innerHTML = `
+      <div class="v11-section-title">
+        <div>
+          <h3 style="margin:0;">📦 الإسناد وإطار العمل</h3>
+          <div class="subtle">
+            إطار جغرافي/تعدادي منظم · الإسناد للباحثين المسكنين فعليًا في هيكل المحافظة
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${frameV11.canManageImport ? `
+            <button class="btn btn-amber btn-sm"
+                    onclick="openFrameImportModalV11('${proj.id}')">
+              📥 استيراد الإطار
+            </button>` : ''}
+          <button class="btn btn-outline btn-sm"
+                  onclick="exportFrameExcelV11('${proj.id}')">
+            ⬇ تصدير Excel
+          </button>
+          <button class="btn btn-outline btn-sm"
+                  onclick="renderProjectUnitsTab(state.activeProjectCache)">
+            🔄 تحديث
+          </button>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="num nums">${fmtNum(stats.total_count || 0)}</div>
+          <div class="lbl">إجمالي الإطار</div>
+        </div>
+        <div class="kpi-card success">
+          <div class="num nums">${fmtNum(stats.assigned_count || 0)}</div>
+          <div class="lbl">مسند</div>
+        </div>
+        <div class="kpi-card">
+          <div class="num nums">${fmtNum(stats.unassigned_count || 0)}</div>
+          <div class="lbl">غير مسند</div>
+        </div>
+        <div class="kpi-card amber">
+          <div class="num nums">${fmtNum(stats.in_progress_count || 0)}</div>
+          <div class="lbl">جاري التنفيذ</div>
+        </div>
+        <div class="kpi-card success">
+          <div class="num nums">${fmtNum(stats.completed_count || 0)}</div>
+          <div class="lbl">مكتمل</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="grid cols-3">
+          <div class="field">
+            <label>المحافظة</label>
+            <select id="fr_gov" class="input" onchange="reloadFrameV11(true)">
+              <option value="">كل المحافظات المتاحة</option>
+              ${govList.map(g=>`
+                <option value="${g.id}"
+                  ${String(frameV11.filters.governorateId)===String(g.id)?'selected':''}>
+                  ${esc(String(g.code).padStart(2,'0'))} — ${esc(g.name)}
+                </option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>كود القسم/المركز</label>
+            <input id="fr_center" class="input nums"
+                   maxlength="4"
+                   value="${esc(frameV11.filters.centerCode)}"
+                   placeholder="مثال 0133">
+          </div>
+          <div class="field">
+            <label>كود الشياخة/القرية</label>
+            <input id="fr_vel" class="input nums"
+                   maxlength="6"
+                   value="${esc(frameV11.filters.velCode)}"
+                   placeholder="6 خانات">
+          </div>
+          <div class="field">
+            <label>منطقة المعاون</label>
+            <input id="fr_area" class="input nums"
+                   maxlength="9"
+                   value="${esc(frameV11.filters.areaCode)}"
+                   placeholder="9 خانات">
+          </div>
+          <div class="field">
+            <label>حالة الإسناد</label>
+            <select id="fr_assignment_state" class="input">
+              <option value="all" ${frameV11.filters.assignmentState==='all'?'selected':''}>الكل</option>
+              <option value="unassigned" ${frameV11.filters.assignmentState==='unassigned'?'selected':''}>غير مسند</option>
+              <option value="assigned" ${frameV11.filters.assignmentState==='assigned'?'selected':''}>مسند</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>بحث</label>
+            <input id="fr_search" class="input"
+                   value="${esc(frameV11.filters.search)}"
+                   placeholder="مسلسل / اسم / عنوان / كود تعدادي">
+          </div>
+        </div>
+
+        <div class="flex-between" style="margin-top:12px;gap:8px;flex-wrap:wrap;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" onclick="reloadFrameV11(true)">🔎 تطبيق الفلاتر</button>
+            <button class="btn btn-outline btn-sm" onclick="clearFrameFiltersV11()">مسح الفلاتر</button>
+          </div>
+
+          ${frameV11.canAssign ? `
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-amber btn-sm" onclick="openFrameAssignSelectedV11()">
+              إسناد المحدد
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="openFrameAssignFirstNV11()">
+              إسناد أول N
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="openFrameUnassignSelectedV11()">
+              إلغاء إسناد المحدد
+            </button>
+          </div>` : ''}
+        </div>
+      </div>
+
+      <div id="frameTableV11">
+        <div class="empty-rich">
+          <div class="icon"><span class="spinner"></span></div>
+          <h3>جارِ تحميل السجلات...</h3>
+        </div>
+      </div>`;
+
+    frameV11.offset = 0;
+    resetFrameSelectionV11();
+    await loadFramePageV11(proj);
+  }catch(err){
+    showError('projectBody',err.message);
+  }
+}
+
+async function reloadFrameV11(resetPage=false){
+  const proj = state.activeProjectCache;
+  if(!proj) return;
+  readFrameFiltersV11();
+  if(resetPage) frameV11.offset = 0;
+  resetFrameSelectionV11();
+  await loadFramePageV11(proj);
+}
+
+async function clearFrameFiltersV11(){
+  frameV11.filters = {
+    governorateId:'',
+    centerCode:'',
+    velCode:'',
+    areaCode:'',
+    assignmentState:'all',
+    search:''
+  };
+  frameV11.offset = 0;
+  resetFrameSelectionV11();
+  await renderProjectUnitsTab(state.activeProjectCache);
+}
+
+async function loadFramePageV11(proj){
+  const box = document.getElementById('frameTableV11');
+  if(!box) return;
+
+  box.innerHTML = `
+    <div class="empty-rich">
+      <div class="icon"><span class="spinner"></span></div>
+      <h3>جارِ تحميل الإطار...</h3>
+    </div>`;
+
+  try{
+    const rows = await callRPC(
+      'get_project_frame_v11',
+      frameFilterParamsV11(proj,frameV11.offset,frameV11.limit)
+    );
+
+    frameV11.rows = rows || [];
+    frameV11.total = frameV11.rows.length
+      ? Number(frameV11.rows[0].total_count || 0)
+      : 0;
+
+    renderFrameTableV11();
+  }catch(err){
+    box.innerHTML = `<div class="empty-rich"><div class="icon">⚠️</div><h3>${esc(err.message)}</h3></div>`;
+  }
+}
+
+function renderFrameTableV11(){
+  const box = document.getElementById('frameTableV11');
+  if(!box) return;
+
+  const rows = frameV11.rows || [];
+  const from = frameV11.total ? frameV11.offset + 1 : 0;
+  const to = Math.min(frameV11.offset + rows.length,frameV11.total);
+  const hasPrev = frameV11.offset > 0;
+  const hasNext = frameV11.offset + frameV11.limit < frameV11.total;
+
+  if(rows.length===0){
+    box.innerHTML = `
+      <div class="empty-rich">
+        <div class="icon">📦</div>
+        <h3>لا توجد سجلات إطار في هذا النطاق</h3>
+        <p>${frameV11.canManageImport?'يمكن استيراد ملف الإطار من زر «استيراد الإطار».':'لا توجد بيانات متاحة وفق نطاق صلاحيتك الحالي.'}</p>
+      </div>`;
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div class="flex-between" style="padding:12px 14px;border-bottom:1px solid var(--border);">
+        <div>
+          <strong class="nums">${fmtNum(frameV11.total)} سجل</strong>
+          <span class="subtle nums"> · عرض ${fmtNum(from)}–${fmtNum(to)}</span>
+          <span class="subtle"> · المحدد: <strong id="fr_selected_count" class="nums">0</strong></span>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="toggleAllFrameRowsV11(true)">تحديد الصفحة</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:36px;">
+                <input type="checkbox" id="fr_check_all" onchange="toggleAllFrameRowsV11(this.checked)">
+              </th>
+              <th>مسلسل الإطار</th>
+              <th>المحافظة</th>
+              <th>القسم/المركز</th>
+              <th>الشياخة/القرية</th>
+              <th>منطقة المعاون</th>
+              <th>الكود التعدادي</th>
+              <th>الأسرة/المنشأة</th>
+              <th>العنوان</th>
+              <th>الباحث</th>
+              <th>الحالة</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r=>`
+              <tr>
+                <td>
+                  <input type="checkbox"
+                         class="fr-row-check"
+                         value="${r.work_unit_id}"
+                         onchange="toggleFrameRowV11('${r.work_unit_id}',this.checked)">
+                </td>
+                <td class="nums"><strong>${esc(r.frame_serial || '—')}</strong></td>
+                <td>
+                  <span class="nums">${esc(r.governorate_code || '')}</span>
+                  ${esc(r.governorate_name || '—')}
+                </td>
+                <td>
+                  <span class="nums">${esc(r.center_code || '')}</span>
+                  <div class="subtle">${esc(r.center_name || '—')}</div>
+                </td>
+                <td>
+                  <span class="nums">${esc(r.vel_code || '')}</span>
+                  <div class="subtle">${esc(r.vel_name || '—')}</div>
+                </td>
+                <td class="nums">${esc(r.enumerator_area_code || '—')}</td>
+                <td class="nums" style="white-space:nowrap;">
+                  ${esc(r.census_entity_code || r.building_census_code || '—')}
+                </td>
+                <td>
+                  <strong>${esc(r.entity_name || '—')}</strong>
+                </td>
+                <td style="max-width:260px;">
+                  <div style="white-space:normal;">${esc(r.detailed_address || '—')}</div>
+                </td>
+                <td>
+                  ${r.current_assignment_id
+                    ? `<strong>${esc(r.researcher_name || '—')}</strong>
+                       <div class="subtle nums">${esc(r.researcher_slot_code || '')}</div>`
+                    : '<span class="subtle">غير مسند</span>'}
+                </td>
+                <td>${frameStatusBadgeV11(r.unit_status)}</td>
+                <td>
+                  <button class="link-btn" onclick="openFrameHistoryV11('${r.work_unit_id}')">السجل</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex-between" style="padding:12px 14px;border-top:1px solid var(--border);">
+        <button class="btn btn-outline btn-sm"
+                ${hasPrev?'':'disabled'}
+                onclick="framePrevPageV11()">
+          السابق
+        </button>
+        <div class="subtle nums">${fmtNum(from)}–${fmtNum(to)} / ${fmtNum(frameV11.total)}</div>
+        <button class="btn btn-outline btn-sm"
+                ${hasNext?'':'disabled'}
+                onclick="frameNextPageV11()">
+          التالي
+        </button>
+      </div>
+    </div>`;
+}
+
+function toggleFrameRowV11(id,checked){
+  if(checked) frameV11.selected.add(id);
+  else frameV11.selected.delete(id);
+  const el=document.getElementById('fr_selected_count');
+  if(el) el.textContent=frameV11.selected.size;
+}
+
+function toggleAllFrameRowsV11(checked){
+  document.querySelectorAll('.fr-row-check').forEach(ch=>{
+    ch.checked=checked;
+    if(checked) frameV11.selected.add(ch.value);
+    else frameV11.selected.delete(ch.value);
+  });
+  const all=document.getElementById('fr_check_all');
+  if(all) all.checked=checked;
+  const el=document.getElementById('fr_selected_count');
+  if(el) el.textContent=frameV11.selected.size;
+}
+
+async function frameNextPageV11(){
+  if(frameV11.offset + frameV11.limit >= frameV11.total) return;
+  frameV11.offset += frameV11.limit;
+  resetFrameSelectionV11();
+  await loadFramePageV11(state.activeProjectCache);
+}
+
+async function framePrevPageV11(){
+  frameV11.offset = Math.max(0,frameV11.offset-frameV11.limit);
+  resetFrameSelectionV11();
+  await loadFramePageV11(state.activeProjectCache);
+}
+
+/* -------------------- Excel import -------------------- */
+
+function openFrameImportModalV11(projectId){
+  if(!frameV11.canManageImport){
+    return showToast('استيراد الإطار غير متاح لهذه الصلاحية','danger');
+  }
+
+  const proj=state.activeProjectCache;
+  if(!frameCycleReadyV11(proj)){
+    return showToast('اختر دورة التشغيل أولًا','danger');
+  }
+
+  frameV11.activeBatchId=null;
+  frameV11.importErrors=[];
+
+  showModal('frameImportV11Modal',`
+    <div class="modal-box modal-xl">
+      <h3>📥 استيراد إطار العمل</h3>
+      <p class="sub">
+        الاستيراد يمر بمرحلة فحص قبل الاعتماد. الأكواد الإدارية تُراجع مقابل
+        جدول <span class="nums">districts</span>.
+      </p>
+      <div class="subtle nums" style="margin-bottom:8px;">
+        Frame Engine: V11.0-RC1N3
+      </div>
+
+      <div class="notice-box" style="margin-bottom:14px;">
+        <strong>مهم:</strong>
+        أعمدة الأكواد خصوصًا 16 و24 خانة يجب أن تكون <strong>Text</strong> في Excel
+        للحفاظ على الأصفار وعدم فقد الدقة العددية.
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <button class="btn btn-outline btn-sm" onclick="downloadFrameTemplateV11()">
+          ⬇ تحميل نموذج Excel
+        </button>
+      </div>
+
+      <div class="file-drop" onclick="document.getElementById('frameFileV11').click()">
+        <div class="icon">📥</div>
+        <div class="title">اختر ملف إطار العمل</div>
+        <div class="hint">.xlsx / .xls — يتم رفعه وفحصه على دفعات</div>
+      </div>
+      <input type="file" id="frameFileV11" accept=".xlsx,.xls"
+             style="display:none"
+             onchange="handleFrameFileV11(this.files[0],'${projectId}')">
+
+      <div id="frameImportStatusV11" style="margin-top:14px;"></div>
+
+      <div class="flex-end" style="margin-top:14px;">
+        <button class="btn btn-outline" onclick="closeModal('frameImportV11Modal')">إغلاق</button>
+      </div>
+    </div>`);
+}
+
+async function downloadFrameTemplateV11(){
+  if(typeof XLSX==='undefined') return showToast('مكتبة Excel لم تُحمّل','danger');
+
+  try{
+    districtsCacheLoadedFull = false;
+    await loadAllDistrictsPagedV11(true);
+
+    if(districtsCacheRowCount < 1){
+      throw new Error('الدليل الإداري فارغ');
+    }
+  }catch(err){
+    return showToast(
+      'تعذر تحميل الدليل الإداري كاملًا [directory-rpc]: ' + err.message,
+      'danger'
+    );
+  }
+
+  const headers=[
+    'كود المحافظة',
+    'المحافظة',
+    'كود القسم/المركز',
+    'القسم/المركز',
+    'كود الشياخة/القرية',
+    'الشياخة/القرية',
+    'رقم منطقة المعاون',
+    'رقم القطعة المساحية',
+    'رقم المبنى داخل منطقة المعاون',
+    'تكرار رقم المبنى',
+    'رقم تعداد المبنى',
+    'مستوى الدور',
+    'رقم الدور',
+    'رقم الوحدة داخل الدور',
+    'رقم المنشأة داخل الوحدة',
+    'رقم الأسرة/المنشأة من التعداد',
+    'مسلسل الأسرة/المنشأة بالإطار',
+    'اسم الأسرة/المنشأة',
+    'العنوان بالتفصيل',
+    'ملاحظات'
+  ];
+
+  const ws=XLSX.utils.aoa_to_sheet([headers]);
+  ws['!cols']=headers.map((h,i)=>({wch:[1,2,3,4,5,6,7,9,10,14,15].includes(i)?22:28}));
+
+  const instructions=[
+    {'البند':'كود المحافظة','القاعدة':'2 خانة'},
+    {'البند':'كود القسم/المركز','القاعدة':'4 خانات، أول 2 = المحافظة'},
+    {'البند':'كود الشياخة/القرية','القاعدة':'6 خانات، أول 4 = القسم/المركز'},
+    {'البند':'رقم منطقة المعاون','القاعدة':'9 خانات، أول 6 = الشياخة/القرية'},
+    {'البند':'رقم تعداد المبنى','القاعدة':'16 خانة، أول 9 = منطقة المعاون'},
+    {'البند':'الكود التعدادي الكامل','القاعدة':'24 خانة = 16 رقم + A/B/C/D + 7 أرقام'},
+    {'البند':'مثال 24 خانة','القاعدة':'0133050010013000A0010101'},
+    {'البند':'A/B/C/D','القاعدة':'A فوق الأرض، B تحت الأرض، C مسلوح، D مبنى عمل كامل من وحدة واحدة'},
+    {'البند':'صيغة Excel','القاعدة':'اجعل أعمدة الأكواد Text، خصوصًا 16 و24 خانة'},
+    {'البند':'عدد سجلات الدليل الإداري المرفق','القاعدة':String(districtsCacheRowCount)}
+  ];
+  const wi=XLSX.utils.json_to_sheet(instructions);
+
+  const directory=[];
+  govList.forEach(g=>{
+    const ds=districtsCache[g.id]||[];
+    ds.forEach(d=>directory.push({
+      'كود المحافظة':String(g.code).padStart(2,'0'),
+      'المحافظة':g.name,
+      'كود القسم/المركز':d.centerCode||'',
+      'القسم/المركز':d.center||'',
+      'كود الشياخة/القرية':d.velCode||'',
+      'الشياخة/القرية':d.name||''
+    }));
+  });
+  const wd=XLSX.utils.json_to_sheet(directory);
+  const wv=XLSX.utils.json_to_sheet([{
+    'الإصدار':'V11.0-RC1N3',
+    'عدد سجلات الدليل الإداري':districtsCacheRowCount,
+    'حالة التحميل': directory.length===districtsCacheRowCount ? 'مكتمل' : 'غير مكتمل'
+  }]);
+
+  if(directory.length !== districtsCacheRowCount){
+    return showToast(
+      `خطأ داخلي: الدليل المجمع ${fmtNum(directory.length)} من ${fmtNum(districtsCacheRowCount)}`,
+      'danger'
+    );
+  }
+
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'الإطار');
+  XLSX.utils.book_append_sheet(wb,wi,'تعليمات');
+  XLSX.utils.book_append_sheet(wb,wd,'الدليل الإداري');
+  XLSX.utils.book_append_sheet(wb,wv,'تحقق');
+  XLSX.writeFile(wb,'نموذج_استيراد_إطار_العمل_RC1N3.xlsx');
+  showToast(`✅ تم إنشاء النموذج ومعه ${fmtNum(districtsCacheRowCount)} سجل من الدليل الإداري`,'success');
+}
+
+async function handleFrameFileV11(file,projectId){
+  if(!file) return;
+  let rc1n3Stage = 'file-start';
+  if(typeof XLSX==='undefined') return showToast('مكتبة Excel لم تُحمّل','danger');
+  if(!/\.(xlsx|xls)$/i.test(file.name)) return showToast('صيغة الملف غير مدعومة','danger');
+
+  const statusBox=document.getElementById('frameImportStatusV11');
+  statusBox.innerHTML=`<div class="subtle"><span class="spinner"></span> جارِ قراءة الملف...</div>`;
+
+  try{
+    rc1n3Stage='read-excel';
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rawRows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
+
+    if(!rawRows.length){
+      statusBox.innerHTML='<div class="badge badge-danger">الملف لا يحتوي على بيانات</div>';
+      return;
+    }
+
+    const rows=rawRows.map(mapFrameExcelRowV11);
+    frameV11.importFileName=file.name;
+
+    statusBox.innerHTML=`
+      <div class="subtle"><span class="spinner"></span>
+      تم قراءة ${fmtNum(rows.length)} صف. جارِ إنشاء دفعة الفحص...</div>`;
+
+    rc1n3Stage='create-import-batch';
+    const batchId=await callRPC('create_frame_import_batch_v11',{
+      p_project_id:projectId,
+      p_cycle_id:frameCycleIdV11(state.activeProjectCache),
+      p_filename:file.name
+    });
+
+    frameV11.activeBatchId=batchId;
+
+    const chunkSize=500;
+    for(let i=0;i<rows.length;i+=chunkSize){
+      const chunk=rows.slice(i,i+chunkSize);
+      statusBox.innerHTML=`
+        <div class="subtle"><span class="spinner"></span>
+        جارِ فحص الصفوف ${fmtNum(i+1)}–${fmtNum(Math.min(i+chunk.length,rows.length))}
+        من ${fmtNum(rows.length)}...</div>`;
+
+      rc1n3Stage=`upload-chunk-${i+1}`;
+      await callRPC('upload_frame_import_chunk_v11',{
+        p_batch_id:batchId,
+        p_start_row:i+2,
+        p_rows:chunk
+      });
+    }
+
+    rc1n3Stage='refresh-import-summary';
+    await refreshFrameImportSummaryV11(batchId,projectId);
+  }catch(err){
+    console.error('RC1N3 frame import error',rc1n3Stage,err);
+    statusBox.innerHTML=`
+      <div class="badge badge-danger">
+        [${esc(rc1n3Stage)}] ${esc(err.message)}
+      </div>
+      <div class="subtle nums" style="margin-top:8px;">
+        ${esc(err.code || '')} ${esc(err.details || '')} ${esc(err.hint || '')}
+      </div>`;
+  }
+}
+
+async function refreshFrameImportSummaryV11(batchId,projectId){
+  const statusBox=document.getElementById('frameImportStatusV11');
+  try{
+    const summaryRows=await callRPC('get_frame_import_batch_v11',{p_batch_id:batchId});
+    const s=Array.isArray(summaryRows)?summaryRows[0]:summaryRows;
+    if(!s) throw new Error('تعذر قراءة نتيجة فحص الإطار');
+
+    let errors=[];
+    if(Number(s.error_rows||0)>0){
+      errors=await callRPC('get_frame_import_errors_v11',{
+        p_batch_id:batchId,
+        p_limit:200
+      });
+    }
+    frameV11.importErrors=errors||[];
+
+    statusBox.innerHTML=`
+      <div class="kpi-grid" style="margin-top:6px;">
+        <div class="kpi-card"><div class="num nums">${fmtNum(s.total_rows||0)}</div><div class="lbl">إجمالي الصفوف</div></div>
+        <div class="kpi-card success"><div class="num nums">${fmtNum(s.valid_rows||0)}</div><div class="lbl">صحيح</div></div>
+        <div class="kpi-card ${Number(s.error_rows||0)>0?'danger':''}">
+          <div class="num nums">${fmtNum(s.error_rows||0)}</div><div class="lbl">به أخطاء</div>
+        </div>
+      </div>
+
+      ${Number(s.error_rows||0)>0 ? `
+        <div class="card" style="margin-top:10px;padding:0;overflow:hidden;">
+          <div class="flex-between" style="padding:10px 12px;">
+            <strong>أول ${fmtNum(frameV11.importErrors.length)} خطأ</strong>
+            <button class="btn btn-outline btn-sm" onclick="exportFrameImportErrorsV11()">⬇ تصدير الأخطاء</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>صف Excel</th><th>الخطأ</th></tr></thead>
+              <tbody>
+                ${frameV11.importErrors.map(e=>`
+                  <tr>
+                    <td class="nums">${e.row_no}</td>
+                    <td>${(e.errors||[]).map(x=>esc(x.message||'خطأ')).join('<br>')}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="notice-box danger" style="margin-top:10px;">
+          صحح الملف ثم ارفعه من جديد. لن يتم إدخال أي سجل في الإطار قبل أن تصبح الأخطاء = صفر.
+        </div>
+      ` : `
+        <div class="notice-box success" style="margin-top:10px;">
+          ✅ اجتاز الملف فحوص الأكواد والدليل الإداري. لم يتم إدخاله في الإطار بعد.
+        </div>
+        <div class="flex-end" style="margin-top:10px;">
+          <button class="btn btn-primary"
+                  onclick="commitFrameImportV11('${batchId}','${projectId}')">
+            ✅ اعتماد واستيراد ${fmtNum(s.valid_rows||0)} سجل
+          </button>
+        </div>
+      `}
+    `;
+  }catch(err){
+    statusBox.innerHTML=`<div class="badge badge-danger">${esc(err.message)}</div>`;
+  }
+}
+
+function exportFrameImportErrorsV11(){
+  if(!frameV11.importErrors.length) return;
+  const rows=frameV11.importErrors.map(e=>({
+    'صف Excel':e.row_no,
+    'الأخطاء':(e.errors||[]).map(x=>x.message||'').join(' | '),
+    'البيانات الأصلية':JSON.stringify(e.raw_data||{})
+  }));
+  exportToExcel([{name:'أخطاء الإطار',rows}], 'أخطاء_استيراد_الإطار.xlsx');
+}
+
+async function commitFrameImportV11(batchId,projectId){
+  if(!confirm('اعتماد الملف وإضافته فعليًا إلى إطار المشروع؟')) return;
+  const statusBox=document.getElementById('frameImportStatusV11');
+
+  try{
+    statusBox.innerHTML=`<div class="subtle"><span class="spinner"></span> جارِ اعتماد الإطار...</div>`;
+    const n=await callRPC('commit_frame_import_v11',{p_batch_id:batchId});
+    statusBox.innerHTML=`
+      <div class="notice-box success">
+        ✅ تم استيراد ${fmtNum(n||0)} سجل إلى إطار العمل.
+      </div>
+      <div class="flex-end" style="margin-top:10px;">
+        <button class="btn btn-primary" onclick="closeModal('frameImportV11Modal'); renderProjectUnitsTab(state.activeProjectCache)">
+          عرض الإطار
+        </button>
+      </div>`;
+    showToast(`✅ تم استيراد ${n||0} سجل`,'success');
+  }catch(err){
+    statusBox.innerHTML=`<div class="badge badge-danger">${esc(err.message)}</div>`;
+  }
+}
+
+/* -------------------- Excel export -------------------- */
+
+async function exportFrameExcelV11(projectId){
+  try{
+    readFrameFiltersV11();
+    showToast('جارِ تجهيز ملف الإطار...','info');
+
+    const all=[];
+    let offset=0;
+    const pageSize=1000;
+
+    while(true){
+      const page=await callRPC(
+        'get_project_frame_v11',
+        frameFilterParamsV11(state.activeProjectCache,offset,pageSize)
+      );
+      const rows=page||[];
+      all.push(...rows);
+      if(rows.length<pageSize) break;
+      offset+=rows.length;
+      if(offset>250000) throw new Error('حجم التصدير كبير جدًا في عملية واحدة');
+    }
+
+    const out=all.map(r=>({
+      'كود المحافظة':r.governorate_code||'',
+      'المحافظة':r.governorate_name||'',
+      'كود القسم/المركز':r.center_code||'',
+      'القسم/المركز':r.center_name||'',
+      'كود الشياخة/القرية':r.vel_code||'',
+      'الشياخة/القرية':r.vel_name||'',
+      'رقم منطقة المعاون':r.enumerator_area_code||'',
+      'رقم القطعة المساحية':r.spatial_plot_no||'',
+      'رقم المبنى داخل منطقة المعاون':r.building_number||'',
+      'تكرار رقم المبنى':r.building_repeat||'',
+      'رقم تعداد المبنى':r.building_census_code||'',
+      'مستوى الدور':r.floor_level||'',
+      'رقم الدور':r.floor_number||'',
+      'رقم الوحدة داخل الدور':r.unit_number||'',
+      'رقم المنشأة داخل الوحدة':r.establishment_number||'',
+      'رقم الأسرة/المنشأة من التعداد':r.census_entity_code||'',
+      'مسلسل الأسرة/المنشأة بالإطار':r.frame_serial||'',
+      'اسم الأسرة/المنشأة':r.entity_name||'',
+      'العنوان بالتفصيل':r.detailed_address||'',
+      'ملاحظات':r.notes||'',
+      'اسم الباحث':r.researcher_name||'',
+      'كود الباحث بالهيكل':r.researcher_slot_code||'',
+      'حالة الإسناد':r.current_assignment_id?'مسند':'غير مسند',
+      'حالة التنفيذ':frameStatusArV11(r.unit_status),
+      'تاريخ الإسناد':r.assigned_at||''
+    }));
+
+    exportToExcel(
+      [{name:'إطار العمل',rows:out}],
+      `إطار_${state.activeProjectCache?.code||'المشروع'}.xlsx`
+    );
+  }catch(err){
+    showToast(err.message,'danger');
+  }
+}
+
+/* -------------------- Bulk assignment -------------------- */
+
+function selectedFrameRowsV11(){
+  const ids=frameV11.selected;
+  return (frameV11.rows||[]).filter(r=>ids.has(r.work_unit_id));
+}
+
+async function openFrameAssignSelectedV11(){
+  if(!frameV11.selected.size) return showToast('حدد سجلًا واحدًا على الأقل','danger');
+
+  const selected=selectedFrameRowsV11();
+  const govs=[...new Set(selected.map(r=>Number(r.governorate_id)))];
+  if(govs.length!==1){
+    return showToast('الإسناد الجماعي يجب أن يكون لسجلات من محافظة واحدة','danger');
+  }
+
+  await openFrameAssignmentModalV11('selected',govs[0]);
+}
+
+async function openFrameAssignFirstNV11(){
+  readFrameFiltersV11();
+  if(!frameV11.filters.governorateId){
+    return showToast('اختر محافظة أولًا لاستخدام إسناد أول N','danger');
+  }
+  await openFrameAssignmentModalV11('firstN',Number(frameV11.filters.governorateId));
+}
+
+async function openFrameAssignmentModalV11(mode,govId){
+  try{
+    const allowed=await callRPC('can_assign_project_frame_v11',{
+      p_project_id:state.activeProjectCache.id,
+      p_governorate_id:govId
+    });
+    if(!allowed) return showToast('غير مصرح لك بالإسناد في هذه المحافظة','danger');
+
+    const researchers=await callRPC('get_frame_researchers_v11',{
+      p_project_id:state.activeProjectCache.id,
+      p_governorate_id:govId
+    });
+
+    if(!researchers?.length){
+      return showToast('لا يوجد باحثون مسكنون ونشطون في هيكل هذه المحافظة','danger');
+    }
+
+    const countText=mode==='selected'
+      ? `${frameV11.selected.size} سجل محدد`
+      : 'سيتم اختيار أول N سجل غير مسند طبقًا للفلاتر الحالية';
+
+    showModal('frameAssignV11Modal',`
+      <div class="modal-box">
+        <h3>🔗 إسناد جماعي</h3>
+        <p class="sub">${esc(govName(govId))} · ${esc(countText)}</p>
+
+        ${mode==='firstN'?`
+          <div class="field">
+            <label>عدد السجلات N *</label>
+            <input id="fr_assign_n" type="number" class="input nums"
+                   min="1" max="2000" value="20">
+          </div>`:''}
+
+        <div class="field">
+          <label>الباحث *</label>
+          <select id="fr_assignment_id" class="input">
+            <option value="">— اختر الباحث من هيكل المحافظة —</option>
+            ${(researchers||[]).map(r=>`
+              <option value="${r.assignment_id}">
+                ${esc(r.full_name)} — ${esc(r.slot_code||'')} ${r.national_id?`— ${esc(r.national_id)}`:''}
+              </option>`).join('')}
+          </select>
+        </div>
+
+        ${mode==='selected'?`
+          <div class="field">
+            <label style="display:flex;gap:8px;align-items:center;">
+              <input type="checkbox" id="fr_allow_reassign">
+              السماح بإعادة إسناد السجلات المسندة بالفعل
+            </label>
+          </div>
+          <div class="field">
+            <label>سبب إعادة الإسناد عند الحاجة</label>
+            <textarea id="fr_assign_reason" class="input" rows="2"
+                      placeholder="مطلوب فقط عند نقل حالات من باحث إلى آخر"></textarea>
+          </div>`:''}
+
+        <div class="flex-end">
+          <button class="btn btn-outline" onclick="closeModal('frameAssignV11Modal')">إلغاء</button>
+          <button class="btn btn-primary"
+                  onclick="submitFrameAssignmentV11('${mode}',${govId})">
+            تنفيذ الإسناد
+          </button>
+        </div>
+      </div>`);
+  }catch(err){
+    showToast(err.message,'danger');
+  }
+}
+
+async function submitFrameAssignmentV11(mode,govId){
+  const assignmentId=document.getElementById('fr_assignment_id')?.value;
+  if(!assignmentId) return showToast('اختر الباحث','danger');
+
+  try{
+    let n=0;
+    if(mode==='selected'){
+      const allow=!!document.getElementById('fr_allow_reassign')?.checked;
+      const reason=document.getElementById('fr_assign_reason')?.value.trim()||null;
+
+      n=await callRPC('bulk_assign_frame_units_v11',{
+        p_project_id:state.activeProjectCache.id,
+        p_cycle_id:frameCycleIdV11(state.activeProjectCache),
+        p_work_unit_ids:[...frameV11.selected],
+        p_assignment_id:assignmentId,
+        p_allow_reassign:allow,
+        p_reason:reason
+      });
+    }else{
+      const count=Number(document.getElementById('fr_assign_n')?.value||0);
+      if(count<1) return showToast('أدخل عددًا صحيحًا','danger');
+
+      readFrameFiltersV11();
+      n=await callRPC('bulk_assign_frame_first_n_v11',{
+        p_project_id:state.activeProjectCache.id,
+        p_cycle_id:frameCycleIdV11(state.activeProjectCache),
+        p_governorate_id:govId,
+        p_assignment_id:assignmentId,
+        p_count:count,
+        p_center_code:frameV11.filters.centerCode||null,
+        p_vel_code:frameV11.filters.velCode||null,
+        p_enumerator_area_code:frameV11.filters.areaCode||null
+      });
+    }
+
+    closeModal('frameAssignV11Modal');
+    resetFrameSelectionV11();
+    showToast(`✅ تم إسناد ${n||0} سجل`,'success');
+    await renderProjectUnitsTab(state.activeProjectCache);
+  }catch(err){
+    showToast(err.message,'danger');
+  }
+}
+
+function openFrameUnassignSelectedV11(){
+  if(!frameV11.selected.size) return showToast('حدد سجلًا واحدًا على الأقل','danger');
+
+  showModal('frameUnassignV11Modal',`
+    <div class="modal-box">
+      <h3>↩ إلغاء إسناد جماعي</h3>
+      <p class="sub">${frameV11.selected.size} سجل محدد</p>
+      <div class="field">
+        <label>السبب *</label>
+        <textarea id="fr_unassign_reason" class="input" rows="3"
+                  placeholder="مثال: إعادة توزيع عبء العمل"></textarea>
+      </div>
+      <div class="flex-end">
+        <button class="btn btn-outline" onclick="closeModal('frameUnassignV11Modal')">إلغاء</button>
+        <button class="btn btn-danger" onclick="submitFrameUnassignV11()">تأكيد إلغاء الإسناد</button>
+      </div>
+    </div>`);
+}
+
+async function submitFrameUnassignV11(){
+  const reason=document.getElementById('fr_unassign_reason')?.value.trim()||'';
+  if(reason.length<5) return showToast('أدخل سببًا لا يقل عن 5 أحرف','danger');
+
+  try{
+    const n=await callRPC('bulk_unassign_frame_units_v11',{
+      p_project_id:state.activeProjectCache.id,
+      p_cycle_id:frameCycleIdV11(state.activeProjectCache),
+      p_work_unit_ids:[...frameV11.selected],
+      p_reason:reason
+    });
+    closeModal('frameUnassignV11Modal');
+    resetFrameSelectionV11();
+    showToast(`✅ تم إلغاء إسناد ${n||0} سجل`,'success');
+    await renderProjectUnitsTab(state.activeProjectCache);
+  }catch(err){
+    showToast(err.message,'danger');
+  }
+}
+
+async function openFrameHistoryV11(workUnitId){
+  try{
+    const rows=await callRPC('get_frame_assignment_history_v11',{
+      p_work_unit_id:workUnitId
+    });
+
+    showModal('frameHistoryV11Modal',`
+      <div class="modal-box modal-xl">
+        <h3>🕘 سجل الإسناد</h3>
+        ${!rows?.length?`
+          <div class="empty-rich"><div class="icon">🕘</div><h3>لا توجد حركات إسناد بعد</h3></div>
+        `:`
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>التاريخ</th><th>العملية</th><th>من</th><th>إلى</th><th>السبب</th><th>بواسطة</th></tr></thead>
+              <tbody>
+                ${rows.map(h=>`
+                  <tr>
+                    <td class="nums">${fmtDate(h.changed_at)}</td>
+                    <td>${h.action==='assign'?'إسناد':h.action==='reassign'?'إعادة إسناد':'إلغاء إسناد'}</td>
+                    <td>${esc(h.old_researcher_name||'—')}</td>
+                    <td>${esc(h.new_researcher_name||'—')}</td>
+                    <td>${esc(h.reason||'—')}</td>
+                    <td>${esc(h.changed_by_name||'—')}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`}
+        <div class="flex-end">
+          <button class="btn btn-outline" onclick="closeModal('frameHistoryV11Modal')">إغلاق</button>
+        </div>
+      </div>`);
+  }catch(err){
+    showToast(err.message,'danger');
+  }
+}
+
+
+
+/* ===================================================================
+ * V11.0-RC1O — PER-FORM FIELD EXECUTION STATUS
+ * =================================================================== */
+
+const executionRC1O = {
+  canManage: false,
+  report: [],
+  forms: [],
+  selectedResearcherAssignmentId: null,
+  selectedGovernorateId: '',
+  statusFilter: '',
+  search: '',
+  offset: 0,
+  limit: 100,
+  total: 0,
+  importBatchId: null,
+  importErrors: []
+};
+
+function executionCycleIdRC1O(proj){
+  return proj?.project_mode === 'recurring'
+    ? (state.activeCycleId || null)
+    : null;
+}
+
+function executionStatusArRC1O(v){
+  return ({
+    full:'استيفاء كامل',
+    partial:'استيفاء جزئي',
+    excluded:'مستبعد',
+    in_progress:'جاري الاستيفاء',
+    not_started:'لم يبدأ العمل عليه'
+  })[v] || v || 'لم يبدأ العمل عليه';
+}
+
+function executionStatusBadgeRC1O(v){
+  const label=executionStatusArRC1O(v);
+  if(v==='full') return `<span class="badge badge-success">${label}</span>`;
+  if(v==='partial') return `<span class="badge badge-amber">${label}</span>`;
+  if(v==='excluded') return `<span class="badge badge-danger">${label}</span>`;
+  if(v==='in_progress') return `<span class="badge badge-navy">${label}</span>`;
+  return `<span class="badge">${label}</span>`;
+}
+
+function executionSumRC1O(rows,key){
+  return (rows||[]).reduce((s,r)=>s+Number(r[key]||0),0);
+}
+
+function executionCurrentGovIdRC1O(){
+  const el=document.getElementById('ex_gov_filter');
+  return el?.value ? Number(el.value) : null;
+}
+
+async function renderProjectExecutionV11Tab(proj){
+  const body=document.getElementById('projectBody');
+
+  if(proj?.project_mode==='recurring' && !state.activeCycleId){
+    body.innerHTML=`
+      <div class="empty-rich">
+        <div class="icon">📈</div>
+        <h3>اختر دورة التشغيل أولًا</h3>
+        <p>موقف التنفيذ مرتبط بإطار وإسنادات دورة التشغيل المحددة.</p>
+      </div>`;
+    return;
+  }
+
+  body.innerHTML=`
+    <div class="empty-rich">
+      <div class="icon"><span class="spinner"></span></div>
+      <h3>جارِ تحميل موقف التنفيذ...</h3>
+    </div>`;
+
+  try{
+    const [canManage, report, frameStatsRows] = await Promise.all([
+      callRPC('can_manage_field_execution_v11',{
+        p_project_id:proj.id
+      }),
+      callRPC('get_field_execution_researcher_report_v11',{
+        p_project_id:proj.id,
+        p_cycle_id:executionCycleIdRC1O(proj),
+        p_governorate_id:executionRC1O.selectedGovernorateId
+          ? Number(executionRC1O.selectedGovernorateId)
+          : null
+      }),
+      callRPC('get_project_frame_stats_v11',{
+        p_project_id:proj.id,
+        p_cycle_id:executionCycleIdRC1O(proj)
+      }).catch(()=>[])
+    ]);
+
+    executionRC1O.canManage=!!canManage;
+    executionRC1O.report=report||[];
+
+    const frameStats=Array.isArray(frameStatsRows)
+      ? (frameStatsRows[0]||{})
+      : (frameStatsRows||{});
+
+    const target=executionSumRC1O(report,'target_count');
+    const full=executionSumRC1O(report,'full_count');
+    const partial=executionSumRC1O(report,'partial_count');
+    const excluded=executionSumRC1O(report,'excluded_count');
+    const inProgress=executionSumRC1O(report,'in_progress_count');
+    const notStarted=executionSumRC1O(report,'not_started_count');
+
+    body.innerHTML=`
+      <div class="v11-section-title">
+        <div>
+          <h3 style="margin:0;">📈 أرصدة التنفيذ الميداني</h3>
+          <div class="subtle">
+            المستهدف مشتق تلقائيًا من الإسناد الفعلي للإطار ·
+            الترتيب: المحافظة ← المراجع ← الباحثون
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${executionRC1O.canManage ? `
+            <button class="btn btn-amber btn-sm"
+                    onclick="openExecutionImportRC1O('${proj.id}')">
+              📥 استيراد موقف الاستمارات
+            </button>` : ''}
+
+          <button class="btn btn-outline btn-sm"
+                  onclick="exportExecutionBalancesV11('${proj.id}')">
+            ⬇ تصدير موقف الاستمارات
+          </button>
+
+          <button class="btn btn-outline btn-sm"
+                  onclick="renderProjectExecutionV11Tab(state.activeProjectCache)">
+            🔄 تحديث
+          </button>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="num nums">${fmtNum(frameStats.total_count||0)}</div>
+          <div class="lbl">إجمالي الإطار</div>
+        </div>
+        <div class="kpi-card">
+          <div class="num nums">${fmtNum(target)}</div>
+          <div class="lbl">المستهدف المسند فعليًا</div>
+        </div>
+        <div class="kpi-card">
+          <div class="num nums">${fmtNum(frameStats.unassigned_count||0)}</div>
+          <div class="lbl">غير مسند</div>
+        </div>
+        <div class="kpi-card success">
+          <div class="num nums">${fmtNum(full)}</div>
+          <div class="lbl">استيفاء كامل</div>
+        </div>
+        <div class="kpi-card amber">
+          <div class="num nums">${fmtNum(partial)}</div>
+          <div class="lbl">استيفاء جزئي</div>
+        </div>
+        <div class="kpi-card danger">
+          <div class="num nums">${fmtNum(excluded)}</div>
+          <div class="lbl">مستبعد</div>
+        </div>
+        <div class="kpi-card">
+          <div class="num nums">${fmtNum(inProgress)}</div>
+          <div class="lbl">جاري الاستيفاء</div>
+        </div>
+        <div class="kpi-card">
+          <div class="num nums">${fmtNum(notStarted)}</div>
+          <div class="lbl">لم يبدأ</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="grid cols-3">
+          <div class="field">
+            <label>المحافظة</label>
+            <select id="ex_gov_filter" class="input"
+                    onchange="executionChangeGovernorateRC1O()">
+              <option value="">كل المحافظات المتاحة</option>
+              ${govList.map(g=>`
+                <option value="${g.id}"
+                  ${String(executionRC1O.selectedGovernorateId)===String(g.id)?'selected':''}>
+                  ${esc(String(g.code).padStart(2,'0'))} — ${esc(g.name)}
+                </option>`).join('')}
+            </select>
+          </div>
+
+          <div class="field">
+            <label>حالة الاستمارة</label>
+            <select id="ex_status_filter" class="input">
+              <option value="">كل الحالات</option>
+              <option value="full">استيفاء كامل</option>
+              <option value="partial">استيفاء جزئي</option>
+              <option value="excluded">مستبعد</option>
+              <option value="in_progress">جاري الاستيفاء</option>
+              <option value="not_started">لم يبدأ العمل عليه</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>بحث في الاستمارات</label>
+            <input id="ex_search" class="input"
+                   placeholder="مسلسل / كود تعدادي / اسم / عنوان">
+          </div>
+        </div>
+
+        <div class="flex-between" style="margin-top:10px;gap:8px;flex-wrap:wrap;">
+          <div class="subtle">
+            ${executionRC1O.canManage
+              ? 'يمكنك تعديل حالة كل استمارة أو استيراد موقف جماعي.'
+              : 'صلاحيتك قراءة وتصدير فقط.'}
+          </div>
+
+          <button class="btn btn-outline btn-sm"
+                  onclick="openAllExecutionFormsRC1O()">
+            عرض كل الاستمارات المسندة
+          </button>
+        </div>
+      </div>
+
+      <div id="executionHierarchyRC1O">
+        ${renderExecutionHierarchyRC1O(executionRC1O.report)}
+      </div>
+
+      <div id="executionFormsRC1O"></div>
+    `;
+
+    const st=document.getElementById('ex_status_filter');
+    if(st) st.value=executionRC1O.statusFilter||'';
+    const sr=document.getElementById('ex_search');
+    if(sr) sr.value=executionRC1O.search||'';
+
+  }catch(err){
+    showError('projectBody',err.message);
+  }
+}
+
+function renderExecutionHierarchyRC1O(rows){
+  if(!rows?.length){
+    return `
+      <div class="empty-rich">
+        <div class="icon">📊</div>
+        <h3>لا توجد استمارات مسندة في النطاق الحالي</h3>
+        <p>يظهر المستهدف هنا بعد إسناد وحدات الإطار فعليًا للباحثين.</p>
+      </div>`;
+  }
+
+  const govMap=new Map();
+
+  for(const r of rows){
+    const gKey=String(r.governorate_id);
+    if(!govMap.has(gKey)){
+      govMap.set(gKey,{
+        id:r.governorate_id,
+        code:r.governorate_code,
+        name:r.governorate_name,
+        reviewers:new Map(),
+        rows:[]
+      });
+    }
+    const g=govMap.get(gKey);
+    g.rows.push(r);
+
+    const rvKey=r.reviewer_slot_id || '__no_reviewer__';
+    if(!g.reviewers.has(rvKey)){
+      g.reviewers.set(rvKey,{
+        id:r.reviewer_slot_id,
+        code:r.reviewer_code||'',
+        name:r.reviewer_name||'بدون مراجع مسكن',
+        rows:[]
+      });
+    }
+    g.reviewers.get(rvKey).rows.push(r);
+  }
+
+  let html='';
+
+  for(const g of govMap.values()){
+    const gt=g.rows;
+    html+=`
+      <div class="card" style="padding:0;overflow:hidden;margin-top:14px;">
+        <div style="padding:14px;background:var(--navy);color:white;">
+          <div class="flex-between">
+            <strong>
+              المحافظة ${esc(g.code||'')} — ${esc(g.name||'')}
+            </strong>
+            <span class="nums">
+              المستهدف ${fmtNum(executionSumRC1O(gt,'target_count'))}
+            </span>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>الكود</th>
+                <th>الاسم / المستوى</th>
+                <th>المستهدف</th>
+                <th>كامل</th>
+                <th>جزئي</th>
+                <th>مستبعد</th>
+                <th>جاري</th>
+                <th>لم يبدأ</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>`;
+
+    for(const rv of g.reviewers.values()){
+      const rr=rv.rows;
+      html+=`
+        <tr style="background:#f4f7fb;font-weight:800;">
+          <td class="nums">${esc(rv.code||'—')}</td>
+          <td>👁️ المراجع: ${esc(rv.name)}</td>
+          <td class="nums">${fmtNum(executionSumRC1O(rr,'target_count'))}</td>
+          <td class="nums">${fmtNum(executionSumRC1O(rr,'full_count'))}</td>
+          <td class="nums">${fmtNum(executionSumRC1O(rr,'partial_count'))}</td>
+          <td class="nums">${fmtNum(executionSumRC1O(rr,'excluded_count'))}</td>
+          <td class="nums">${fmtNum(executionSumRC1O(rr,'in_progress_count'))}</td>
+          <td class="nums">${fmtNum(executionSumRC1O(rr,'not_started_count'))}</td>
+          <td></td>
+        </tr>`;
+
+      for(const r of rr){
+        html+=`
+          <tr>
+            <td class="nums"><strong>${esc(r.researcher_code||'—')}</strong></td>
+            <td style="padding-right:28px;">
+              🔎 ${esc(r.researcher_name||'—')}
+            </td>
+            <td class="nums">${fmtNum(r.target_count)}</td>
+            <td class="nums">${fmtNum(r.full_count)}</td>
+            <td class="nums">${fmtNum(r.partial_count)}</td>
+            <td class="nums">${fmtNum(r.excluded_count)}</td>
+            <td class="nums">${fmtNum(r.in_progress_count)}</td>
+            <td class="nums">${fmtNum(r.not_started_count)}</td>
+            <td>
+              <button class="link-btn"
+                      onclick="openResearcherExecutionFormsRC1O('${r.researcher_assignment_id}')">
+                الاستمارات
+              </button>
+            </td>
+          </tr>`;
+      }
+    }
+
+    html+=`
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  return html;
+}
+
+async function executionChangeGovernorateRC1O(){
+  const el=document.getElementById('ex_gov_filter');
+  executionRC1O.selectedGovernorateId=el?.value||'';
+  executionRC1O.selectedResearcherAssignmentId=null;
+  executionRC1O.offset=0;
+  await renderProjectExecutionV11Tab(state.activeProjectCache);
+}
+
+async function openResearcherExecutionFormsRC1O(assignmentId){
+  executionRC1O.selectedResearcherAssignmentId=assignmentId;
+  executionRC1O.statusFilter=document.getElementById('ex_status_filter')?.value||'';
+  executionRC1O.search=document.getElementById('ex_search')?.value.trim()||'';
+  executionRC1O.offset=0;
+  await loadExecutionFormsRC1O();
+}
+
+async function openAllExecutionFormsRC1O(){
+  executionRC1O.selectedResearcherAssignmentId=null;
+  executionRC1O.statusFilter=document.getElementById('ex_status_filter')?.value||'';
+  executionRC1O.search=document.getElementById('ex_search')?.value.trim()||'';
+  executionRC1O.offset=0;
+  await loadExecutionFormsRC1O();
+}
+
+async function loadExecutionFormsRC1O(){
+  const proj=state.activeProjectCache;
+  const box=document.getElementById('executionFormsRC1O');
+  if(!proj || !box) return;
+
+  box.innerHTML=`
+    <div class="empty-rich">
+      <div class="icon"><span class="spinner"></span></div>
+      <h3>جارِ تحميل الاستمارات...</h3>
+    </div>`;
+
+  try{
+    const rows=await callRPC('get_field_execution_forms_v11',{
+      p_project_id:proj.id,
+      p_cycle_id:executionCycleIdRC1O(proj),
+      p_researcher_assignment_id:executionRC1O.selectedResearcherAssignmentId,
+      p_governorate_id:executionRC1O.selectedGovernorateId
+        ? Number(executionRC1O.selectedGovernorateId)
+        : null,
+      p_status:executionRC1O.statusFilter||null,
+      p_search:executionRC1O.search||null,
+      p_offset:executionRC1O.offset,
+      p_limit:executionRC1O.limit
+    });
+
+    executionRC1O.forms=rows||[];
+    executionRC1O.total=rows?.length
+      ? Number(rows[0].total_count||0)
+      : 0;
+
+    renderExecutionFormsRC1O();
+  }catch(err){
+    box.innerHTML=`
+      <div class="empty-rich">
+        <div class="icon">⚠️</div>
+        <h3>${esc(err.message)}</h3>
+      </div>`;
+  }
+}
+
+function renderExecutionFormsRC1O(){
+  const box=document.getElementById('executionFormsRC1O');
+  const rows=executionRC1O.forms||[];
+  if(!box) return;
+
+  if(!rows.length){
+    box.innerHTML=`
+      <div class="empty-rich">
+        <div class="icon">📄</div>
+        <h3>لا توجد استمارات مطابقة</h3>
+      </div>`;
+    return;
+  }
+
+  const from=executionRC1O.offset+1;
+  const to=Math.min(
+    executionRC1O.offset+rows.length,
+    executionRC1O.total
+  );
+  const hasPrev=executionRC1O.offset>0;
+  const hasNext=
+    executionRC1O.offset+executionRC1O.limit<executionRC1O.total;
+
+  box.innerHTML=`
+    <div class="card" style="padding:0;overflow:hidden;margin-top:14px;">
+      <div class="flex-between" style="padding:12px 14px;border-bottom:1px solid var(--border);">
+        <div>
+          <strong>تفاصيل الاستمارات</strong>
+          <span class="subtle nums">
+            · ${fmtNum(from)}–${fmtNum(to)} / ${fmtNum(executionRC1O.total)}
+          </span>
+        </div>
+        <button class="btn btn-outline btn-sm"
+                onclick="document.getElementById('executionFormsRC1O').innerHTML=''">
+          إغلاق التفاصيل
+        </button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>المحافظة</th>
+              <th>المراجع</th>
+              <th>الباحث</th>
+              <th>مسلسل الإطار</th>
+              <th>الأسرة/المنشأة</th>
+              <th>العنوان</th>
+              <th>الحالة</th>
+              <th>ملاحظات التنفيذ</th>
+              <th>آخر تحديث</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r=>`
+              <tr>
+                <td>
+                  <span class="nums">${esc(r.governorate_code||'')}</span>
+                  ${esc(r.governorate_name||'')}
+                </td>
+                <td>
+                  <span class="nums">${esc(r.reviewer_code||'—')}</span>
+                  <div class="subtle">${esc(r.reviewer_name||'—')}</div>
+                </td>
+                <td>
+                  <strong class="nums">${esc(r.researcher_code||'—')}</strong>
+                  <div>${esc(r.researcher_name||'—')}</div>
+                </td>
+                <td class="nums">${esc(r.frame_serial||'—')}</td>
+                <td>${esc(r.entity_name||'—')}</td>
+                <td style="max-width:260px;white-space:normal;">
+                  ${esc(r.detailed_address||'—')}
+                </td>
+                <td>
+                  ${executionRC1O.canManage ? `
+                    <select id="ex_status_${r.work_unit_id}" class="input"
+                            style="min-width:155px;">
+                      ${[
+                        ['not_started','لم يبدأ العمل عليه'],
+                        ['in_progress','جاري الاستيفاء'],
+                        ['partial','استيفاء جزئي'],
+                        ['full','استيفاء كامل'],
+                        ['excluded','مستبعد']
+                      ].map(([v,t])=>`
+                        <option value="${v}" ${r.execution_status===v?'selected':''}>
+                          ${t}
+                        </option>`).join('')}
+                    </select>
+                  ` : executionStatusBadgeRC1O(r.execution_status)}
+                </td>
+                <td>
+                  ${executionRC1O.canManage ? `
+                    <input id="ex_notes_${r.work_unit_id}"
+                           class="input"
+                           value="${esc(r.execution_notes||'')}"
+                           placeholder="ملاحظات">
+                  ` : esc(r.execution_notes||'—')}
+                </td>
+                <td>
+                  ${r.updated_at
+                    ? `<div class="nums">${fmtDate(r.updated_at)}</div>
+                       <div class="subtle">${esc(r.updated_by_name||'')}</div>`
+                    : '<span class="subtle">—</span>'}
+                </td>
+                <td style="white-space:nowrap;">
+                  ${executionRC1O.canManage ? `
+                    <button class="btn btn-primary btn-sm"
+                            onclick="saveExecutionFormRC1O('${r.work_unit_id}')">
+                      حفظ
+                    </button>` : ''}
+                  <button class="link-btn"
+                          onclick="openExecutionHistoryRC1O('${r.work_unit_id}')">
+                    السجل
+                  </button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex-between" style="padding:12px 14px;border-top:1px solid var(--border);">
+        <button class="btn btn-outline btn-sm"
+                ${hasPrev?'':'disabled'}
+                onclick="executionPrevPageRC1O()">
+          السابق
+        </button>
+        <div class="subtle nums">
+          ${fmtNum(from)}–${fmtNum(to)} / ${fmtNum(executionRC1O.total)}
+        </div>
+        <button class="btn btn-outline btn-sm"
+                ${hasNext?'':'disabled'}
+                onclick="executionNextPageRC1O()">
+          التالي
+        </button>
+      </div>
+    </div>`;
+}
+
+async function executionNextPageRC1O(){
+  if(
+    executionRC1O.offset+executionRC1O.limit>=executionRC1O.total
+  ) return;
+  executionRC1O.offset+=executionRC1O.limit;
+  await loadExecutionFormsRC1O();
+}
+
+async function executionPrevPageRC1O(){
+  executionRC1O.offset=Math.max(
+    0,
+    executionRC1O.offset-executionRC1O.limit
+  );
+  await loadExecutionFormsRC1O();
+}
+
+async function saveExecutionFormRC1O(workUnitId){
+  if(!executionRC1O.canManage){
+    return showToast('صلاحيتك قراءة فقط','danger');
+  }
+
+  const status=document.getElementById(`ex_status_${workUnitId}`)?.value;
+  const notes=document.getElementById(`ex_notes_${workUnitId}`)?.value.trim()||null;
+
+  try{
+    await callRPC('set_field_execution_status_v11',{
+      p_work_unit_id:workUnitId,
+      p_execution_status:status,
+      p_notes:notes
+    });
+
+    showToast('✅ تم حفظ موقف الاستمارة','success');
+
+    await loadExecutionFormsRC1O();
+
+    const report=await callRPC(
+      'get_field_execution_researcher_report_v11',
+      {
+        p_project_id:state.activeProjectCache.id,
+        p_cycle_id:executionCycleIdRC1O(state.activeProjectCache),
+        p_governorate_id:executionRC1O.selectedGovernorateId
+          ? Number(executionRC1O.selectedGovernorateId)
+          : null
+      }
+    );
+
+    executionRC1O.report=report||[];
+
+    const hierarchy=document.getElementById('executionHierarchyRC1O');
+    if(hierarchy){
+      hierarchy.innerHTML=renderExecutionHierarchyRC1O(executionRC1O.report);
+    }
+  }catch(err){
+    showToast(err.message,'danger');
+  }
+}
+
+async function openExecutionHistoryRC1O(workUnitId){
+  try{
+    const rows=await callRPC('get_field_execution_history_v11',{
+      p_work_unit_id:workUnitId
+    });
+
+    showModal('executionHistoryRC1OModal',`
+      <div class="modal-box modal-xl">
+        <h3>🕘 سجل موقف الاستمارة</h3>
+
+        ${!rows?.length ? `
+          <div class="empty-rich">
+            <div class="icon">🕘</div>
+            <h3>لا توجد تعديلات مسجلة بعد</h3>
+          </div>
+        ` : `
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>التاريخ</th>
+                  <th>من</th>
+                  <th>إلى</th>
+                  <th>المصدر</th>
+                  <th>الملاحظات</th>
+                  <th>بواسطة</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(h=>`
+                  <tr>
+                    <td class="nums">${fmtDate(h.changed_at)}</td>
+                    <td>${executionStatusArRC1O(h.previous_status)}</td>
+                    <td>${executionStatusArRC1O(h.new_status)}</td>
+                    <td>${h.change_source==='import'?'استيراد':'تعديل يدوي'}</td>
+                    <td>${esc(h.new_notes||'—')}</td>
+                    <td>${esc(h.changed_by_name||'—')}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`}
+
+        <div class="flex-end">
+          <button class="btn btn-outline"
+                  onclick="closeModal('executionHistoryRC1OModal')">
+            إغلاق
+          </button>
+        </div>
+      </div>`);
+  }catch(err){
+    showToast(err.message,'danger');
+  }
+}
+
+/* -------------------- Export -------------------- */
+
+async function collectExecutionFormsForExportRC1O(){
+  const proj=state.activeProjectCache;
+  const all=[];
+  let offset=0;
+  const pageSize=1000;
+
+  while(true){
+    const page=await callRPC('get_field_execution_forms_v11',{
+      p_project_id:proj.id,
+      p_cycle_id:executionCycleIdRC1O(proj),
+      p_researcher_assignment_id:null,
+      p_governorate_id:executionRC1O.selectedGovernorateId
+        ? Number(executionRC1O.selectedGovernorateId)
+        : null,
+      p_status:null,
+      p_search:null,
+      p_offset:offset,
+      p_limit:pageSize
+    });
+
+    const rows=page||[];
+    all.push(...rows);
+
+    if(rows.length<pageSize) break;
+    offset+=rows.length;
+
+    if(offset>500000){
+      throw new Error('حجم التصدير كبير جدًا في عملية واحدة');
+    }
+  }
+
+  return all;
+}
+
+async function exportExecutionBalancesV11(projectId){
+  try{
+    showToast('جارِ تجهيز موقف الاستمارات...','info');
+
+    const rows=await collectExecutionFormsForExportRC1O();
+
+    const out=rows.map(r=>({
+      'معرف الاستمارة (لا تعدل)':r.work_unit_id,
+      'كود المحافظة':r.governorate_code||'',
+      'المحافظة':r.governorate_name||'',
+      'كود المراجع':r.reviewer_code||'',
+      'اسم المراجع':r.reviewer_name||'',
+      'كود الباحث':r.researcher_code||'',
+      'اسم الباحث':r.researcher_name||'',
+      'مسلسل الأسرة/المنشأة بالإطار':r.frame_serial||'',
+      'رقم الأسرة/المنشأة من التعداد':r.census_entity_code||'',
+      'اسم الأسرة/المنشأة':r.entity_name||'',
+      'العنوان بالتفصيل':r.detailed_address||'',
+      'حالة التنفيذ':executionStatusArRC1O(r.execution_status),
+      'ملاحظات التنفيذ':r.execution_notes||'',
+      'آخر تحديث':r.updated_at||'',
+      'تم التحديث بواسطة':r.updated_by_name||''
+    }));
+
+    exportToExcel(
+      [{name:'موقف الاستمارات',rows:out}],
+      `موقف_التنفيذ_${state.activeProjectCache?.code||'المشروع'}.xlsx`
+    );
+  }catch(err){
+    showToast(err.message,'danger');
+  }
+}
+
+/* -------------------- Import -------------------- */
+
+function mapExecutionImportRowRC1O(row){
+  const pick=(keys)=>{
+    for(const k of keys){
+      if(Object.prototype.hasOwnProperty.call(row,k)){
+        const v=row[k];
+        if(v!==null && v!==undefined) return String(v).trim();
+      }
+    }
+    return '';
+  };
+
+  return {
+    work_unit_id:pick([
+      'معرف الاستمارة (لا تعدل)',
+      'معرف الاستمارة',
+      'work_unit_id'
+    ]),
+    governorate_code:pick([
+      'كود المحافظة',
+      'governorate_code'
+    ]).replace(/\.0+$/,''),
+    frame_serial:pick([
+      'مسلسل الأسرة/المنشأة بالإطار',
+      'مسلسل الاسره او المنشاه بالاطار',
+      'frame_serial'
+    ]),
+    researcher_code:pick([
+      'كود الباحث',
+      'researcher_code'
+    ]),
+    execution_status:pick([
+      'حالة التنفيذ',
+      'execution_status'
+    ]),
+    notes:pick([
+      'ملاحظات التنفيذ',
+      'ملاحظات',
+      'notes'
+    ])
+  };
+}
+
+function openExecutionImportRC1O(projectId){
+  if(!executionRC1O.canManage){
+    return showToast(
+      'الاستيراد متاح للأدمن ومسؤول المشروع ومنسق المشروع فقط',
+      'danger'
+    );
+  }
+
+  executionRC1O.importBatchId=null;
+  executionRC1O.importErrors=[];
+
+  showModal('executionImportRC1OModal',`
+    <div class="modal-box modal-xl">
+      <h3>📥 استيراد موقف الاستمارات</h3>
+
+      <div class="notice-box">
+        الأفضل استخدام ملف «تصدير موقف الاستمارات»،
+        تعديل عمودي <strong>حالة التنفيذ</strong> و<strong>ملاحظات التنفيذ</strong>
+        فقط، ثم إعادة رفعه.
+        <br>
+        الاستيراد لا يغير الباحث المسند؛ أي اختلاف في كود الباحث يعتبر خطأ.
+      </div>
+
+      <div class="file-drop"
+           style="margin-top:14px;"
+           onclick="document.getElementById('executionFileRC1O').click()">
+        <div class="icon">📥</div>
+        <div class="title">اختر ملف موقف التنفيذ</div>
+        <div class="hint">xlsx / xls — فحص كامل قبل الاعتماد</div>
+      </div>
+
+      <input type="file"
+             id="executionFileRC1O"
+             accept=".xlsx,.xls"
+             style="display:none"
+             onchange="handleExecutionImportFileRC1O(this.files[0],'${projectId}')">
+
+      <div id="executionImportStatusRC1O" style="margin-top:14px;"></div>
+
+      <div class="flex-end" style="margin-top:14px;">
+        <button class="btn btn-outline"
+                onclick="closeModal('executionImportRC1OModal')">
+          إغلاق
+        </button>
+      </div>
+    </div>`);
+}
+
+async function handleExecutionImportFileRC1O(file,projectId){
+  if(!file) return;
+  if(typeof XLSX==='undefined'){
+    return showToast('مكتبة Excel لم تُحمّل','danger');
+  }
+
+  const box=document.getElementById('executionImportStatusRC1O');
+
+  try{
+    box.innerHTML=`
+      <div class="subtle">
+        <span class="spinner"></span> جارِ قراءة الملف...
+      </div>`;
+
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const raw=XLSX.utils.sheet_to_json(
+      ws,
+      {defval:'',raw:false}
+    );
+
+    if(!raw.length){
+      throw new Error('الملف لا يحتوي على بيانات');
+    }
+
+    const rows=raw.map(mapExecutionImportRowRC1O);
+
+    const batchId=await callRPC(
+      'create_field_execution_import_batch_v11',
+      {
+        p_project_id:projectId,
+        p_cycle_id:executionCycleIdRC1O(state.activeProjectCache),
+        p_filename:file.name
+      }
+    );
+
+    executionRC1O.importBatchId=batchId;
+
+    const chunkSize=500;
+
+    for(let i=0;i<rows.length;i+=chunkSize){
+      const chunk=rows.slice(i,i+chunkSize);
+
+      box.innerHTML=`
+        <div class="subtle">
+          <span class="spinner"></span>
+          جارِ فحص ${fmtNum(i+1)}–${fmtNum(Math.min(i+chunk.length,rows.length))}
+          من ${fmtNum(rows.length)}...
+        </div>`;
+
+      await callRPC(
+        'upload_field_execution_import_chunk_v11',
+        {
+          p_batch_id:batchId,
+          p_start_row:i+2,
+          p_rows:chunk
+        }
+      );
+    }
+
+    await refreshExecutionImportSummaryRC1O(batchId);
+  }catch(err){
+    box.innerHTML=`
+      <div class="badge badge-danger">${esc(err.message)}</div>`;
+  }
+}
+
+async function refreshExecutionImportSummaryRC1O(batchId){
+  const box=document.getElementById('executionImportStatusRC1O');
+
+  try{
+    const rows=await callRPC(
+      'get_field_execution_import_batch_v11',
+      {p_batch_id:batchId}
+    );
+
+    const s=Array.isArray(rows)?rows[0]:rows;
+    if(!s) throw new Error('تعذر قراءة نتيجة الفحص');
+
+    let errors=[];
+
+    if(Number(s.error_rows||0)>0){
+      errors=await callRPC(
+        'get_field_execution_import_errors_v11',
+        {
+          p_batch_id:batchId,
+          p_limit:200
+        }
+      );
+    }
+
+    executionRC1O.importErrors=errors||[];
+
+    box.innerHTML=`
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="num nums">${fmtNum(s.total_rows||0)}</div>
+          <div class="lbl">إجمالي الصفوف</div>
+        </div>
+        <div class="kpi-card success">
+          <div class="num nums">${fmtNum(s.valid_rows||0)}</div>
+          <div class="lbl">صحيح</div>
+        </div>
+        <div class="kpi-card ${Number(s.error_rows||0)>0?'danger':''}">
+          <div class="num nums">${fmtNum(s.error_rows||0)}</div>
+          <div class="lbl">به أخطاء</div>
+        </div>
+      </div>
+
+      ${Number(s.error_rows||0)>0 ? `
+        <div class="card" style="margin-top:10px;padding:0;overflow:hidden;">
+          <div class="flex-between" style="padding:10px 12px;">
+            <strong>أخطاء الاستيراد</strong>
+            <button class="btn btn-outline btn-sm"
+                    onclick="exportExecutionImportErrorsRC1O()">
+              ⬇ تصدير الأخطاء
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>صف Excel</th><th>الخطأ</th></tr>
+              </thead>
+              <tbody>
+                ${executionRC1O.importErrors.map(e=>`
+                  <tr>
+                    <td class="nums">${e.row_no}</td>
+                    <td>
+                      ${(e.errors||[]).map(x=>esc(x.message||'خطأ')).join('<br>')}
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : `
+        <div class="notice-box success" style="margin-top:10px;">
+          ✅ اجتاز الملف جميع الفحوص. لم يتم تحديث موقف الاستمارات بعد.
+        </div>
+        <div class="flex-end" style="margin-top:10px;">
+          <button class="btn btn-primary"
+                  onclick="commitExecutionImportRC1O('${batchId}')">
+            ✅ اعتماد وتحديث ${fmtNum(s.valid_rows||0)} استمارة
+          </button>
+        </div>
+      `}
+    `;
+  }catch(err){
+    box.innerHTML=`<div class="badge badge-danger">${esc(err.message)}</div>`;
+  }
+}
+
+function exportExecutionImportErrorsRC1O(){
+  if(!executionRC1O.importErrors.length) return;
+
+  const rows=executionRC1O.importErrors.map(e=>({
+    'صف Excel':e.row_no,
+    'الأخطاء':(e.errors||[]).map(x=>x.message||'').join(' | '),
+    'البيانات الأصلية':JSON.stringify(e.raw_data||{})
+  }));
+
+  exportToExcel(
+    [{name:'أخطاء الاستيراد',rows}],
+    'أخطاء_استيراد_موقف_التنفيذ.xlsx'
+  );
+}
+
+async function commitExecutionImportRC1O(batchId){
+  if(!confirm('اعتماد الملف وتحديث موقف الاستمارات؟')) return;
+
+  const box=document.getElementById('executionImportStatusRC1O');
+
+  try{
+    box.innerHTML=`
+      <div class="subtle">
+        <span class="spinner"></span> جارِ اعتماد موقف التنفيذ...
+      </div>`;
+
+    const changed=await callRPC(
+      'commit_field_execution_import_v11',
+      {p_batch_id:batchId}
+    );
+
+    box.innerHTML=`
+      <div class="notice-box success">
+        ✅ تم اعتماد الملف. عدد الاستمارات التي تغير موقفها فعليًا:
+        <strong class="nums">${fmtNum(changed||0)}</strong>
+      </div>`;
+
+    showToast('✅ تم تحديث موقف التنفيذ','success');
+
+    setTimeout(async()=>{
+      closeModal('executionImportRC1OModal');
+      await renderProjectExecutionV11Tab(state.activeProjectCache);
+    },500);
+
+  }catch(err){
+    box.innerHTML=`
+      <div class="badge badge-danger">${esc(err.message)}</div>`;
+  }
 }
 
 
