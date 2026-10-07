@@ -1,4 +1,4 @@
-<!-- C1.5 / 2026-10-07: project list tabs, search, pagination and active-only UI for followup/region/office. Server enforcement and archive pending schema review. -->
+<!-- C1.7 / 2026-10-07: lazy administrative directory, concurrent dashboard metrics, nonblocking pending badges; includes C1.5. -->
 <!DOCTYPE html>
 <!-- C1.2 / 2026-10-01: project setup fixes re-integrated after database recovery.
 Baseline: supplied FINANCE_STABLE(2); reader dependencies checked against full backup.
@@ -28,7 +28,7 @@ Reader absent from restored backup: install matching C1.2 SQL; live role test pe
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>منصة العمل الموحد — V11 C1.5 · إعداد المشروع والدورات</title>
+<title>منصة العمل الموحد — V11 C1.7 · إعداد المشروع والدورات</title>
 
 <!-- مكتبات -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -1284,7 +1284,7 @@ td{
 <button class="mobile-toggle" onclick="document.getElementById('sidebar')?.classList.toggle('open')">☰</button>
 <div class="toast" id="toast"></div>
 <div id="modals-container"></div>
-<div class="rc-review-banner">V11.0-C1.5 · مراجعة إعداد المشروع والدورات · المالية FINANCE-STABLE</div>
+<div class="rc-review-banner">V11.0-C1.7 · مراجعة إعداد المشروع والدورات · المالية FINANCE-STABLE</div>
 
 <script>
 /* ============================================================
@@ -2703,6 +2703,7 @@ async function doLogout(){
 }
 
 /* ============ Load Profile ============ */
+let startupPendingC17=Promise.resolve();
 async function loadProfile(){
   const { data, error } = await sb.from('profiles')
     .select('*, profile_governorates(governorate_id)')
@@ -2764,18 +2765,13 @@ async function loadProfile(){
     console.warn('Regions are not available:', regionsError.message);
   }
   
-  // تحميل الدليل الإداري كاملًا على صفحات.
-  // Supabase/PostgREST قد يحد نتيجة الطلب الواحد إلى 1000 صف.
-  try{
-    await loadAllDistrictsPagedV11(true);
-  }catch(e){
-    districtsCache = {};
-    districtsCacheLoadedFull = false;
-    console.warn('Full districts directory could not be loaded:', e.message);
-  }
-  
-  await refreshPendingCounts();
+  // C1.7: the full directory is fetched only by downloadFrameTemplateV11.
+  const loginUserC17=profile.id;
+  startupPendingC17=refreshPendingCounts();
   renderApp();
+  startupPendingC17.then(()=>{
+    if(profile?.id===loginUserC17) renderNav();
+  }).catch(err=>console.warn('Pending counts:',err));
 }
 
 async function refreshPendingCounts(){
@@ -2809,7 +2805,7 @@ function renderApp(){
     <div id="sidebar">
       <div class="brand">
         <div class="brand-title">منصة العمل الموحد</div>
-        <div class="brand-sub">للأبحاث والدراسات الميدانية — V11.0-C1.5</div>
+        <div class="brand-sub">للأبحاث والدراسات الميدانية — V11.0-C1.7</div>
       </div>
       <nav id="navList"></nav>
       <div class="sidebar-foot">
@@ -3310,60 +3306,33 @@ async function renderDashboard(){
       totalPaid: 0
     };
     
-    // إحصائيات المشتغلين
-    const { count: workersCount } = await sb.from('individuals')
-      .select('id', { count: 'exact', head: true });
-    stats.workers = workersCount || 0;
-    
-    const { count: activeWorkersCount } = await sb.from('individuals')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'active');
-    stats.activeWorkers = activeWorkersCount || 0;
-    
-    // إحصائيات المشاريع
-    const { count: projectsCount } = await projectQueryC15(sb.from('projects')
-      .select('id', { count: 'exact', head: true }));
-    stats.projects = projectsCount || 0;
-    
-    const { count: activeProjectsCount } = await sb.from('projects')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'active');
-    stats.activeProjects = activeProjectsCount || 0;
-    
-    // إحصائيات التسكينات
-    const { count: assignmentsCount } = await sb.from('assignments')
-      .select('id', { count: 'exact', head: true });
-    stats.assignments = assignmentsCount || 0;
-    
-    const { count: activeAssignmentsCount } = await sb.from('assignments')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'active');
-    stats.activeAssignments = activeAssignmentsCount || 0;
-    
-    // إحصائيات الوحدات
-    const { count: unitsCount } = await sb.from('work_units')
-      .select('id', { count: 'exact', head: true });
-    stats.units = unitsCount || 0;
-    
-    const { count: completedUnitsCount } = await sb.from('work_units')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'completed');
-    stats.completedUnits = completedUnitsCount || 0;
-    
-    // إجمالي المدفوعات
-    const { data: payments } = await sb.from('payments')
-      .select('amount')
-      .eq('status', 'paid');
-    stats.totalPaid = (payments || []).reduce((s, p) => s + parseFloat(p.amount || 0), 0);
-    
-    // إحصائيات المستخدمين (للدمن فقط)
-    let userStats = null;
-    if(role === 'admin'){
-      try {
-        userStats = await callRPC('get_user_stats');
-      } catch(e) { /* ignore */ }
-    }
-    
+    // C1.7: independent metrics run concurrently; count queries return no rows.
+    const metricQueriesC17 = [
+      ['workers',sb.from('individuals').select('id',{count:'exact',head:true})],
+      ['activeWorkers',sb.from('individuals').select('id',{count:'exact',head:true}).eq('status','active')],
+      ['projects',projectQueryC15(sb.from('projects').select('id',{count:'exact',head:true}))],
+      ['activeProjects',sb.from('projects').select('id',{count:'exact',head:true}).eq('status','active')],
+      ['assignments',sb.from('assignments').select('id',{count:'exact',head:true})],
+      ['activeAssignments',sb.from('assignments').select('id',{count:'exact',head:true}).eq('status','active')],
+      ['units',sb.from('work_units').select('id',{count:'exact',head:true})],
+      ['completedUnits',sb.from('work_units').select('id',{count:'exact',head:true}).eq('status','completed')]
+    ];
+    const [metricResultsC17,paymentsResultC17,userStatsC17] = await Promise.all([
+      Promise.all(metricQueriesC17.map(async ([key,query])=>{
+        const result=await query;
+        if(result.error) throw result.error;
+        return [key,result.count||0];
+      })),
+      sb.from('payments').select('amount').eq('status','paid'),
+      role==='admin' ? callRPC('get_user_stats').catch(()=>null) : Promise.resolve(null),
+      startupPendingC17
+    ]);
+    if(paymentsResultC17.error) throw paymentsResultC17.error;
+    metricResultsC17.forEach(([key,value])=>{stats[key]=value;});
+    stats.totalPaid=(paymentsResultC17.data||[]).reduce((sum,p)=>sum+parseFloat(p.amount||0),0);
+    const userStats=userStatsC17;
+    if(state.tab!=='dashboard') return;
+
     const unitsProgress = stats.units > 0 
       ? Math.round(stats.completedUnits / stats.units * 100) 
       : 0;
