@@ -1,4 +1,9 @@
+<!-- C1.5 / 2026-10-07: project list tabs, search, pagination and active-only UI for followup/region/office. Server enforcement and archive pending schema review. -->
 <!DOCTYPE html>
+<!-- C1.2 / 2026-10-01: project setup fixes re-integrated after database recovery.
+Baseline: supplied FINANCE_STABLE(2); reader dependencies checked against full backup.
+Install V11_C1_2_SETUP_READER.sql before using this HTML.
+Local mocked checks passed; live database/role verification remains required. -->
 <!--
   OFFICIAL FINANCE FREEZE
   V11.0-FINANCE-STABLE
@@ -10,11 +15,20 @@
 -->
 
 
+<!--
+C1.2 review record
+Baseline: platform-v11_0_FINANCE_STABLE(1).html; includes C1 calendar/form fixes.
+Setup uses get_project_assigned_managers_v11(uuid) for all signed-in roles.
+Candidate lookup remains inside the Admin manager-management dialog.
+Section failures remain visible without discarding other setup data.
+Training and finance source preserved from baseline.
+Reader absent from restored backup: install matching C1.2 SQL; live role test pending.
+-->
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>منصة العمل الموحد للأبحاث والدراسات الميدانية — V10</title>
+<title>منصة العمل الموحد — V11 C1.5 · إعداد المشروع والدورات</title>
 
 <!-- مكتبات -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -1270,7 +1284,7 @@ td{
 <button class="mobile-toggle" onclick="document.getElementById('sidebar')?.classList.toggle('open')">☰</button>
 <div class="toast" id="toast"></div>
 <div id="modals-container"></div>
-<div class="rc-review-banner">V11.0-FINANCE-STABLE · تطوير مالية التدريب · V10.2.10 محفوظة للرجوع</div>
+<div class="rc-review-banner">V11.0-C1.5 · مراجعة إعداد المشروع والدورات · المالية FINANCE-STABLE</div>
 
 <script>
 /* ============================================================
@@ -2795,7 +2809,7 @@ function renderApp(){
     <div id="sidebar">
       <div class="brand">
         <div class="brand-title">منصة العمل الموحد</div>
-        <div class="brand-sub">للأبحاث والدراسات الميدانية — V11.0-FINANCE-STABLE</div>
+        <div class="brand-sub">للأبحاث والدراسات الميدانية — V11.0-C1.5</div>
       </div>
       <nav id="navList"></nav>
       <div class="sidebar-foot">
@@ -3239,8 +3253,8 @@ async function route(){
 }
 
 async function populateProjectPicker(){
-  const { data: projects } = await sb.from('projects')
-    .select('id, name')
+  const { data: projects } = await projectQueryC15(sb.from('projects')
+    .select('id, name'))
     .order('created_at', { ascending: false });
   
   const sel = document.getElementById('activeProjectSelect');
@@ -3248,11 +3262,12 @@ async function populateProjectPicker(){
   
   const list = projects || [];
   if(list.length === 0){
+    state.activeProjectId=null; state.activeProjectCache=null;
     sel.innerHTML = '<option value="">لا توجد مشاريع</option>';
     return;
   }
   
-  if(!state.activeProjectId) state.activeProjectId = list[0].id;
+  if(!list.some(p=>p.id===state.activeProjectId)){ state.activeProjectId = list[0].id; state.activeProjectCache=null; }
   
   sel.innerHTML = list.map(p => `
     <option value="${p.id}" ${p.id === state.activeProjectId ? 'selected' : ''}>
@@ -3306,8 +3321,8 @@ async function renderDashboard(){
     stats.activeWorkers = activeWorkersCount || 0;
     
     // إحصائيات المشاريع
-    const { count: projectsCount } = await sb.from('projects')
-      .select('id', { count: 'exact', head: true });
+    const { count: projectsCount } = await projectQueryC15(sb.from('projects')
+      .select('id', { count: 'exact', head: true }));
     stats.projects = projectsCount || 0;
     
     const { count: activeProjectsCount } = await sb.from('projects')
@@ -3747,6 +3762,7 @@ async function renderGovWorkersTab(gov){
 }
 
 function renderGovProjectsTab(gov, projects){
+  projects=visibleProjectsC15(projects);
   const body = document.getElementById('govTabBody');
   
   if(projects.length === 0){
@@ -3827,7 +3843,7 @@ async function renderWorkers(){
 
     if(error) throw error;
 
-    const { data: projects } = await sb.from('projects').select('id, name').order('name');
+    const { data: projects } = await projectQueryC15(sb.from('projects').select('id, name')).order('name');
 
     _workersAllCache = workers || [];
     _workersProjectsCache = projects || [];
@@ -7320,6 +7336,28 @@ function exportPaymentsExcel(){
  * ============================================================ */
 
 /* ============ Projects List ============ */
+// C1.5: display filtering only; database access rules remain authoritative.
+function activeProjectsOnlyC15(){ return ['followup','region','office'].includes(profile?.role); }
+function projectQueryC15(query){ return activeProjectsOnlyC15() ? query.eq('status','active') : query; }
+function visibleProjectsC15(rows){ return (rows||[]).filter(p=>!activeProjectsOnlyC15() || p.status==='active'); }
+const projectListC15={status:'active',search:'',sort:'newest',page:1,rows:null,owner:null};
+function selectProjectsC15(rows, options){
+  const q=options.search.trim().toLocaleLowerCase('ar');
+  return visibleProjectsC15(rows).filter(p=>(options.status==='all'||p.status===options.status) &&
+    (!q||`${p.name||''} ${p.code||''}`.toLocaleLowerCase('ar').includes(q)))
+    .sort((a,b)=>options.sort==='name' ? String(a.name||'').localeCompare(String(b.name||''),'ar') :
+      String(b.created_at||'').localeCompare(String(a.created_at||'')) || String(a.id).localeCompare(String(b.id)));
+}
+function changeProjectsC15(status){
+  projectListC15.status=status;projectListC15.page=1;renderProjects(true);
+}
+function searchProjectsC15(){
+  projectListC15.search=document.getElementById('projectsSearchC15').value;
+  projectListC15.sort=document.getElementById('projectsSortC15').value;
+  projectListC15.page=1;renderProjects(true);
+}
+function pageProjectsC15(page){projectListC15.page=page;renderProjects(true);}
+
 async function loadProjectsDashboardLegacy(){
   const { data: projects, error } = await sb.from('projects')
     .select('id, name, code, start_date, end_date, status, created_at')
@@ -7374,19 +7412,31 @@ async function loadProjectsDashboard(){
   }
 }
 
-async function renderProjects(){
+async function renderProjects(useCached=false){
   setBreadcrumb([{label:'المشروعات'}]);
   const c = document.getElementById('content');
   showLoading('content', 'جارِ تحميل المشروعات...');
 
   try {
-    const projects = await loadProjectsDashboard();
+    const owner=String(profile?.id||'')+':'+String(profile?.role||'');
+    if(!useCached || !projectListC15.rows || projectListC15.owner!==owner){
+      projectListC15.rows=await loadProjectsDashboard();
+      projectListC15.owner=owner;
+    }
+    if(activeProjectsOnlyC15()) projectListC15.status='active';
+    const all=visibleProjectsC15(projectListC15.rows);
+    const matched=selectProjectsC15(all,projectListC15);
+    const pages=Math.max(1,Math.ceil(matched.length/12));
+    projectListC15.page=Math.max(1,Math.min(projectListC15.page,pages));
+    const projects=matched.slice((projectListC15.page-1)*12,projectListC15.page*12);
+    const labels={active:'نشطة',draft:'مسودات',finished:'منتهية'};
+
 
     c.innerHTML = `
       <div class="flex-between" style="margin-bottom:18px;">
         <div>
           <h2 style="margin:0;font-size:20px;">قائمة المشروعات</h2>
-          <div class="subtle">${projects.length} مشروع</div>
+          <div class="subtle">${matched.length} مشروع مطابق · ${all.length} مشروع متاح لحسابك</div>
         </div>
         ${canCreateProject() ? `
           <button class="btn btn-amber" onclick="startProjectWizard()">
@@ -7395,11 +7445,32 @@ async function renderProjects(){
         ` : ''}
       </div>
 
+      <div class="card" style="padding:16px;margin-bottom:18px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+          ${(activeProjectsOnlyC15()?['active']:['active','draft','finished','all']).map(key=>`
+            <button class="btn ${projectListC15.status===key?'btn-primary':'btn-outline'}" aria-pressed="${projectListC15.status===key}" onclick="changeProjectsC15('${key}')">
+              ${labels[key]||'الكل'} (${key==='all'?all.length:all.filter(p=>p.status===key).length})
+            </button>`).join('')}
+        </div>
+        <form onsubmit="event.preventDefault();searchProjectsC15()" style="display:flex;gap:10px;flex-wrap:wrap;">
+          <input id="projectsSearchC15" aria-label="البحث باسم أو كود المشروع" placeholder="ابحث باسم المشروع أو الكود" value="${esc(projectListC15.search)}" style="flex:1;min-width:180px;">
+          <select id="projectsSortC15" aria-label="ترتيب المشروعات">
+            <option value="newest" ${projectListC15.sort==='newest'?'selected':''}>الأحدث أولًا</option>
+            <option value="name" ${projectListC15.sort==='name'?'selected':''}>الاسم أبجديًا</option>
+          </select>
+          <button class="btn btn-primary" type="submit">بحث</button>
+        </form>
+      </div>
+      <div class="flex-between" style="margin-bottom:14px;">
+        <button class="btn btn-outline" ${projectListC15.page<=1?'disabled':''} onclick="pageProjectsC15(${projectListC15.page-1})">السابق</button>
+        <span>صفحة ${projectListC15.page} من ${pages}</span>
+        <button class="btn btn-outline" ${projectListC15.page>=pages?'disabled':''} onclick="pageProjectsC15(${projectListC15.page+1})">التالي</button>
+      </div>
       ${projects.length === 0 ? `
         <div class="empty-rich">
           <div class="icon">📁</div>
-          <h3>لا توجد مشروعات</h3>
-          <p>${canCreateProject() ? 'اضغط "مشروع جديد" للبدء.' : 'انتظر حتى ينشئ المشرف العام مشروعاً.'}</p>
+          <h3>لا توجد مشروعات مطابقة</h3>
+          <p>${canCreateProject() ? 'اضغط "مشروع جديد" للبدء.' : 'لا توجد مشروعات نشطة متاحة لحسابك ضمن هذا البحث.'}</p>
         </div>
       ` : projects.map(p => {
         const slots = Number(p.slots || 0);
@@ -8011,6 +8082,10 @@ async function renderProjectDetail(){
   }
   const proj=state.activeProjectCache;
   if(!proj) return showError('content','المشروع غير موجود');
+  if(activeProjectsOnlyC15() && proj.status!=='active'){
+    state.activeProjectCache=null;
+    return showError('content','هذا المشروع غير نشط. تعرض صلاحية حسابك المشروعات النشطة فقط.');
+  }
 
   const currentProjectSection=projectTabLabelRC1K(state.projectTab);
 
@@ -8500,17 +8575,45 @@ async function submitAddStructureSlot(projectId){
   }
 }
 
+const structureDeletePendingC13 = new Set();
+function structureDeleteErrorC13(err){
+  const message=String(err?.message||'');
+  if(err?.code==='23503' || /foreign key constraint/i.test(message)){
+    if(message.includes('assignments_slot_id_fkey'))
+      return 'لا يمكن حذف هذا الكود لارتباطه بسجل تسكين، حتى لو كان التسكين منتهيًا أو ملغى والكود شاغرًا الآن. يُحتفظ بالكود لحماية تاريخ التسكينات.';
+    return 'لا يمكن حذف هذا الكود لوجود سجلات أو أكواد فرعية مرتبطة به. يجب مراجعة الارتباطات أولًا؛ لم يتم الحذف.';
+  }
+  if(err?.code==='42501') return 'لا تتوفر صلاحية حذف هذا الكود. لم يتم الحذف.';
+  return message||'تعذر حذف الكود. أعد المحاولة بعد التحقق من الاتصال.';
+}
 async function deleteStructureSlot(slotId){
-  if(!isCentral()) return showToast('متاح لمنسق المشروع فقط', 'danger');
-  if(!confirm('حذف هذا الكود؟')) return;
-  
+  if(!isCentral()) return showToast('غير مصرح لك بحذف أكواد الهيكل', 'danger');
+  if(structureDeletePendingC13.has(slotId)) return;
+  const projectId=state.activeProjectId;
+  if(!projectId) return showToast('أعد فتح المشروع قبل حذف الكود','danger');
+  structureDeletePendingC13.add(slotId);
   try {
-    const { error } = await sb.from('structure_slots').delete().eq('id', slotId);
+    const {data:slot,error:readError}=await sb.from('structure_slots')
+      .select('id,code,status,individual_id').eq('id',slotId).eq('project_id',projectId).maybeSingle();
+    if(readError) throw readError;
+    if(state.activeProjectId!==projectId) return;
+    if(!slot) return showToast('الكود غير موجود أو غير متاح لحسابك. حدّث الهيكل.','danger');
+    if(slot.status!=='vacant'||slot.individual_id)
+      return showToast('لا يمكن حذف كود مرتبط بفرد. راجع التسكين أو ارتباط الهيكل أولًا.','danger');
+    if(!confirm(`حذف الكود ${slot.code}؟ إذا كان مرتبطًا بسجلات سابقة فسيُمنع الحذف حفاظًا عليها.`)) return;
+    const {data:deleted,error}=await sb.from('structure_slots').delete()
+      .eq('id',slotId).eq('project_id',projectId).eq('status','vacant')
+      .is('individual_id',null).select('id');
     if(error) throw error;
-    showToast('✅ تم الحذف', 'success');
-    renderProjectStructureTab(state.activeProjectCache, state.activeProjectCache.govIds || []);
+    if(!Array.isArray(deleted)||deleted.length!==1)
+      return showToast('لم يُحذف الكود؛ ربما تغيرت حالته أو صلاحيات الوصول. حدّث الهيكل.','danger');
+    showToast('تم حذف الكود','success');
+    if(state.activeProjectId===projectId&&state.projectTab==='structure'&&state.activeProjectCache?.id===projectId)
+      await renderProjectStructureTab(state.activeProjectCache,state.activeProjectCache.govIds||[]);
   } catch(err) {
-    showToast(err.message, 'danger');
+    showToast(structureDeleteErrorC13(err),'danger');
+  } finally {
+    structureDeletePendingC13.delete(slotId);
   }
 }
 
@@ -9838,11 +9941,10 @@ function openProjectEditModal(){
         <div class="field">
           <label>الحالة</label>
           <select id="ep_status">
-            <option value="planning" ${proj.status === 'planning' ? 'selected' : ''}>تخطيط</option>
+            <option value="draft" ${proj.status === 'draft' ? 'selected' : ''}>مسودة</option>
             <option value="active" ${proj.status === 'active' ? 'selected' : ''}>نشط</option>
-            <option value="closing" ${proj.status === 'closing' ? 'selected' : ''}>إغلاق</option>
-            <option value="closed" ${proj.status === 'closed' ? 'selected' : ''}>منتهي</option>
-            <option value="cancelled" ${proj.status === 'cancelled' ? 'selected' : ''}>ملغى</option>
+            <option value="finished" ${proj.status === 'finished' ? 'selected' : ''}>منتهي</option>
+            ${!['draft','active','finished'].includes(proj.status) ? `<option value="" selected disabled>حالة غير متوافقة: ${esc(proj.status)}</option>` : ''}
           </select>
         </div>
         <div class="field" style="grid-column:1/-1;">
@@ -9875,20 +9977,27 @@ async function submitProjectEdit(){
     return showToast('تاريخ الانتهاء يجب أن يكون بعد البدء', 'danger');
   }
   
+  if(!['draft','active','finished'].includes(status)){
+    return showToast('اختر حالة مشروع صالحة', 'danger');
+  }
+  const projectId = state.activeProjectId;
+  if(!projectId) return showToast('أعد فتح المشروع قبل الحفظ', 'danger');
   try {
-    const { error } = await sb.from('projects').update({
+    const { data, error } = await sb.from('projects').update({
       name,
       start_date: start,
       end_date: end,
       status,
       requesting_entity: entity,
       description: desc,
-      updated_at: new Date().toISOString(),
-      updated_by: profile.id
-    }).eq('id', state.activeProjectId);
+      updated_at: new Date().toISOString()
+    }).eq('id', projectId).select('id');
     
     if(error) throw error;
-    
+    if(!Array.isArray(data) || data.length !== 1){
+      return showToast('لم يتم حفظ التعديل. تحقق من صلاحية تعديل المشروع ثم حدّث الصفحة.', 'danger');
+    }
+    if(state.activeProjectId !== projectId) return;
     closeModal('editProjectModal');
     showToast('✅ تم الحفظ', 'success');
     state.activeProjectCache = null;
@@ -10594,7 +10703,19 @@ async function openAddCoordinatorModal(){
   if(!isAdmin()) return showToast('متاح للمشرف العام فقط', 'danger');
 
   try{
-    const projects = await loadProjectsDashboard();
+    const owner=String(profile?.id||'')+':'+String(profile?.role||'');
+    if(!useCached || !projectListC15.rows || projectListC15.owner!==owner){
+      projectListC15.rows=await loadProjectsDashboard();
+      projectListC15.owner=owner;
+    }
+    if(activeProjectsOnlyC15()) projectListC15.status='active';
+    const all=visibleProjectsC15(projectListC15.rows);
+    const matched=selectProjectsC15(all,projectListC15);
+    const pages=Math.max(1,Math.ceil(matched.length/12));
+    projectListC15.page=Math.max(1,Math.min(projectListC15.page,pages));
+    const projects=matched.slice((projectListC15.page-1)*12,projectListC15.page*12);
+    const labels={active:'نشطة',draft:'مسودات',finished:'منتهية'};
+
 
     showModal('addCoordinatorModal', `
       <div class="modal-box">
@@ -10789,7 +10910,7 @@ async function renderRates(){
 }
 
 async function openAddRateModal(){
-  const { data: projects } = await sb.from('projects').select('id, name').order('name');
+  const { data: projects } = await projectQueryC15(sb.from('projects').select('id, name')).order('name');
   showModal('addRateModal', `
     <div class="modal-box">
       <h3>+ إضافة سعر</h3>
@@ -10900,7 +11021,7 @@ async function renderExceptions(){
 
 async function openAddExceptionModal(){
   const { data: individuals } = await sb.from('individuals').select('id, full_name').limit(200);
-  const { data: projects } = await sb.from('projects').select('id, name').order('name');
+  const { data: projects } = await projectQueryC15(sb.from('projects').select('id, name')).order('name');
   showModal('addExceptionModal', `
     <div class="modal-box">
       <h3>+ طلب استثناء</h3>
@@ -12058,12 +12179,78 @@ async function removeProjectCoordinatorRC1D(id){
 
 
 
+
+/* C1 — Project setup, calendar dates and form submission guards.
+   Finance baseline: FINANCE-STABLE. Requires matching C1.2 reader: get_project_assigned_managers_v11(uuid).
+   Client checks supplement existing RPC/RLS authorization; they do not replace it. */
+const projectWritesC1 = new Set();
+function todayProjectC1(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function validProjectDateC1(value){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(value||'')) return false;
+  const d=new Date(value+'T00:00:00Z');
+  return Number.isFinite(d.getTime()) && d.toISOString().slice(0,10)===value;
+}
+function addProjectDaysC1(value,days){
+  if(!validProjectDateC1(value)||!Number.isSafeInteger(days)) throw new Error('تاريخ الدورة أو مدتها غير صالح');
+  const d=new Date(value+'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate()+days);
+  const result=d.toISOString().slice(0,10);
+  if(!validProjectDateC1(result)) throw new Error('تاريخ الدورة خارج النطاق المتاح');
+  return result;
+}
+function canEditProjectC1(projectId){
+  return !!projectId && state.activeProjectId===projectId &&
+    state.activeProjectCache?.id===projectId && state.currentProjectCanManage===true;
+}
+function requireProjectEditC1(projectId){
+  if(canEditProjectC1(projectId)) return true;
+  showToast('لا تتوفر صلاحية تعديل هذا المشروع، أو تغير المشروع المفتوح. أعد فتحه وحاول مجددًا.','danger');
+  return false;
+}
+async function runProjectWriteC1(projectId,kind,modalId,task){
+  if(!requireProjectEditC1(projectId)) return;
+  const key=projectId+':'+kind;
+  if(projectWritesC1.has(key)) return;
+  projectWritesC1.add(key);
+  const buttons=Array.from(document.getElementById(modalId)?.querySelectorAll('button')||[]);
+  const disabled=buttons.map(b=>b.disabled);
+  buttons.forEach(b=>{b.disabled=true;});
+  try{await task();}catch(e){showToast(e.message||'تعذر حفظ التعديل','danger');}
+  finally{projectWritesC1.delete(key);buttons.forEach((b,i)=>{b.disabled=disabled[i];});}
+}
+async function projectRowsC1(query){
+  const result=await query;
+  if(result.error) throw new Error(result.error.message||'تعذر تحميل البيانات');
+  if(!Array.isArray(result.data)) throw new Error('لم تكتمل استجابة البيانات');
+  return result.data;
+}
+async function loadProjectSetupC1(projectId){
+  const results=await Promise.allSettled([
+    projectRowsC1(sb.from('project_versions').select('*').eq('project_id',projectId).order('version_no',{ascending:false})),
+    callRPC('get_project_assigned_managers_v11',{p_project_id:projectId}).then(rows=>{
+      if(!Array.isArray(rows)) throw new Error('استجابة قائمة مسؤولي المشروع غير مكتملة');
+      return rows;
+    }),
+    callRPC('get_project_coordinators_v11',{p_project_id:projectId})
+  ]);
+  return results.map(r=>r.status==='fulfilled'
+    ? {data:r.value||[],error:null}
+    : {data:[],error:r.reason?.message||'تعذر التحميل'});
+}
+function projectSectionErrorC1(label,error){
+  return `<div class="v11-note" role="alert">تعذر تحميل ${esc(label)}: ${esc(error)}. أعد فتح تبويب إعداد المشروع للمحاولة مجددًا.</div>`;
+}
+
 /* ---------------- RC1E: Project Cycles ---------------- */
 function versionTypeArRC1E(v){return {rule_change:'قاعدة تشغيل',financial_change:'تغيير مالي / أسعار',structure_change:'تغيير هيكل',target_change:'تغيير مستهدف',other:'آخر'}[v]||v||'—';}
 function cycleStatusArRC1E(s){return {draft:'مسودة',open:'مفتوحة',closed:'مغلقة',settled:'تمت التسوية',cancelled:'ملغاة'}[s]||s;}
 async function selectProjectCycleRC1E(id){state.activeCycleId=id||null;await route();}
 
 function openConfigureProjectModeRC1E(projectId){
+  if(!requireProjectEditC1(projectId)) return;
   const p=state.activeProjectCache;
   showModal('configureModeRC1E',`<div class="modal-box"><h3>🔄 طبيعة المشروع</h3>
     <div class="field"><label>النوع</label><select id="pmode_type" class="input" onchange="document.getElementById('pmode_more').style.display=this.value==='recurring'?'':'none'">
@@ -12076,15 +12263,18 @@ function openConfigureProjectModeRC1E(projectId){
     <div class="flex-end"><button class="btn btn-outline" onclick="closeModal('configureModeRC1E')">إلغاء</button><button class="btn btn-primary" onclick="submitConfigureProjectModeRC1E('${projectId}')">حفظ</button></div></div>`);
 }
 async function submitConfigureProjectModeRC1E(projectId){
-  const mode=document.getElementById('pmode_type').value;
-  try{
+  await runProjectWriteC1(projectId,'mode','configureModeRC1E',async()=>{
+    const mode=document.getElementById('pmode_type').value;
+    const days=Number(document.getElementById('pmode_days').value);
+    if(!['single','recurring'].includes(mode)) throw new Error('نوع المشروع غير صالح');
+    if(mode==='recurring'&&(!Number.isSafeInteger(days)||days<1)) throw new Error('مدة الدورة يجب أن تكون عددًا صحيحًا موجبًا');
     await callRPC('configure_project_cycles_v11',{
-      p_project_id:projectId,p_project_mode:mode,
-      p_default_cycle_days:mode==='recurring'?Number(document.getElementById('pmode_days').value||15):null,
+      p_project_id:projectId,p_project_mode:mode,p_default_cycle_days:mode==='recurring'?days:null,
       p_cycle_code_prefix:mode==='recurring'?(document.getElementById('pmode_prefix').value.trim()||null):null
     });
-    closeModal('configureModeRC1E');state.activeProjectCache=null;showToast('✅ تم تحديث طبيعة المشروع','success');await route();
-  }catch(e){showToast(e.message,'danger');}
+    closeModal('configureModeRC1E');showToast('✅ تم تحديث طبيعة المشروع','success');
+    if(state.activeProjectId===projectId){state.activeProjectCache=null;await route();}
+  });
 }
 
 async function renderProjectCyclesRC1E(proj){
@@ -12110,12 +12300,16 @@ async function renderProjectCyclesRC1E(proj){
 }
 
 function openCreateCycleRC1E(projectId){
-  const p=state.activeProjectCache, cycles=state.projectCycles||[], last=cycles[0];
-  let start=new Date().toISOString().slice(0,10);
-  if(last?.end_date){const d=new Date(last.end_date+'T00:00:00');d.setDate(d.getDate()+1);start=d.toISOString().slice(0,10);}
-  const e=new Date(start+'T00:00:00');e.setDate(e.getDate()+Math.max((p.default_cycle_days||15)-1,0));
+  if(!requireProjectEditC1(projectId)) return;
+  const p=state.activeProjectCache, cycles=state.projectCycles||[];
+  if(p.project_mode!=='recurring') return showToast('إنشاء الدورات متاح للمشروع الدوري فقط','danger');
+  const lastEnd=cycles.filter(c=>c.status!=='cancelled'&&validProjectDateC1(c.end_date))
+    .map(c=>c.end_date).sort().pop();
+  const start=lastEnd?addProjectDaysC1(lastEnd,1):todayProjectC1();
+  const duration=Number(p.default_cycle_days||15);
+  const end=addProjectDaysC1(start,Number.isSafeInteger(duration)&&duration>0?duration-1:14);
   showModal('createCycleRC1E',`<div class="modal-box"><h3>+ دورة تشغيلية جديدة</h3>
-    <div class="form-row"><div class="field"><label>من *</label><input id="cy_start" type="date" class="input" value="${start}"></div><div class="field"><label>إلى *</label><input id="cy_end" type="date" class="input" value="${e.toISOString().slice(0,10)}"></div></div>
+    <div class="form-row"><div class="field"><label>من *</label><input id="cy_start" type="date" class="input" value="${start}"></div><div class="field"><label>إلى *</label><input id="cy_end" type="date" class="input" value="${end}"></div></div>
     <div class="form-row"><div class="field"><label>كود الدورة</label><input id="cy_code" class="input" placeholder="تلقائي إذا تُرك فارغًا"></div><div class="field"><label>اسم الدورة</label><input id="cy_title" class="input"></div></div>
     <div class="card" style="background:#F8FAFB;"><h4>🗂️ إطار العمل</h4><div class="form-row"><div class="field"><label>كود الإطار</label><input id="cy_frame_code" class="input"></div><div class="field"><label>اسم الإطار</label><input id="cy_frame_name" class="input"></div></div>
     <div class="field"><label>مرجع الإطار</label><input id="cy_frame_ref" class="input"></div><div class="field"><label>المستهدف</label><input id="cy_target" type="number" min="0" class="input" value="0"></div></div>
@@ -12124,19 +12318,26 @@ function openCreateCycleRC1E(projectId){
     <div class="flex-end"><button class="btn btn-outline" onclick="closeModal('createCycleRC1E')">إلغاء</button><button class="btn btn-primary" onclick="submitCreateCycleRC1E('${projectId}')">إنشاء</button></div></div>`);
 }
 async function submitCreateCycleRC1E(projectId){
-  try{
+  await runProjectWriteC1(projectId,'cycle','createCycleRC1E',async()=>{
+    if(state.activeProjectCache.project_mode!=='recurring') throw new Error('المشروع الحالي غير دوري');
+    const start=document.getElementById('cy_start').value,end=document.getElementById('cy_end').value;
+    const target=Number(document.getElementById('cy_target').value||0);
+    const source=document.getElementById('cy_source')?.value||null;
+    if(!validProjectDateC1(start)||!validProjectDateC1(end)) throw new Error('تاريخ بداية الدورة ونهايتها مطلوبان وصالحان');
+    if(end<start) throw new Error('نهاية الدورة لا يمكن أن تسبق بدايتها');
+    if(!Number.isSafeInteger(target)||target<0) throw new Error('المستهدف يجب أن يكون عددًا صحيحًا غير سالب');
+    if(source&&!(state.projectCycles||[]).some(c=>c.id===source)) throw new Error('دورة القالب غير موجودة ضمن المشروع المفتوح');
     const id=await callRPC('create_project_cycle_v11',{
-      p_project_id:projectId,p_start_date:document.getElementById('cy_start').value,p_end_date:document.getElementById('cy_end').value,
+      p_project_id:projectId,p_start_date:start,p_end_date:end,
       p_cycle_code:document.getElementById('cy_code').value.trim()||null,p_title:document.getElementById('cy_title').value.trim()||null,
       p_frame_code:document.getElementById('cy_frame_code').value.trim()||null,p_frame_name:document.getElementById('cy_frame_name').value.trim()||null,
-      p_frame_reference:document.getElementById('cy_frame_ref').value.trim()||null,p_target_count:Number(document.getElementById('cy_target').value||0),
-      p_source_cycle_id:document.getElementById('cy_source')?.value||null,p_notes:document.getElementById('cy_notes').value.trim()||null
+      p_frame_reference:document.getElementById('cy_frame_ref').value.trim()||null,p_target_count:target,
+      p_source_cycle_id:source,p_notes:document.getElementById('cy_notes').value.trim()||null
     });
-    state.activeCycleId=id;closeModal('createCycleRC1E');showToast('✅ تم إنشاء الدورة وحفظ قالبها','success');state.activeProjectCache=null;await route();
-  }catch(e){showToast(e.message,'danger');}
+    closeModal('createCycleRC1E');showToast('✅ تم إنشاء الدورة وحفظ قالبها','success');
+    if(state.activeProjectId===projectId){state.activeCycleId=id;state.activeProjectCache=null;await route();}
+  });
 }
-
-
 
 /* ---------------- V11 RC1M: Workforce eligibility ---------------- */
 
@@ -12608,14 +12809,14 @@ async function renderProjectOverviewV11(proj, pg){
 async function renderProjectSetupV11(proj){
   const body=document.getElementById('projectBody');
   try{
-    const [vRes,managerCandidates,coordinators]=await Promise.all([
-      sb.from('project_versions').select('*').eq('project_id',proj.id).order('version_no',{ascending:false}),
-      callRPC('get_project_manager_candidates_v11',{p_project_id:proj.id}),
-      callRPC('get_project_coordinators_v11',{p_project_id:proj.id})
-    ]);
-    const versions=vRes.data||[];
-    const mgrs=(managerCandidates||[]).filter(x=>x.is_assigned===true);
-    const coords=coordinators||[];
+    const requestToken={};
+    state.projectSetupRequestC1=requestToken;
+    const [versionResult,managerResult,coordinatorResult]=await loadProjectSetupC1(proj.id);
+    if(state.projectSetupRequestC1!==requestToken || state.activeProjectId!==proj.id ||
+       state.projectTab!=='setup' || body!==document.getElementById('projectBody')) return;
+    const versions=versionResult.data;
+    const mgrs=managerResult.data;
+    const coords=coordinatorResult.data;
 
     body.innerHTML=`
       <div class="grid cols-2">
@@ -12635,9 +12836,9 @@ async function renderProjectSetupV11(proj){
         <div class="card">
           <div class="v11-section-title"><h3>🎯 الإدارة التشغيلية</h3>${isAdmin()?`<button class="btn btn-amber btn-sm" onclick="openManageProjectManagersV11('${proj.id}')">إدارة مسؤولي المشروع</button>`:''}</div>
           <div class="subtle">مسؤولو المشروع</div>
-          <div style="margin:7px 0 14px;">${mgrs.length?mgrs.map(m=>`<span class="chip">${esc(m.full_name)} · فعال</span>`).join(' '):'<span class="subtle">—</span>'}</div>
+          <div style="margin:7px 0 14px;">${managerResult.error?projectSectionErrorC1('مسؤولي المشروع',managerResult.error):mgrs.length?mgrs.map(m=>`<span class="chip">${esc(m.full_name||'اسم غير مسجل')} · ${m.is_active===true?'نشط':'غير نشط'}</span>`).join(' '):'<span class="subtle">لا يوجد مسؤولون معينون لهذا المشروع.</span>'}</div>
           <div class="subtle">المنسقون التشغيليون</div>
-          <div style="margin-top:7px;">${coords.length?coords.map(c=>`<span class="chip teal">${esc(c.full_name)} · ${c.role_type==='main'?'رئيسي':'نائب'}</span>`).join(' '):'—'}</div>
+          <div style="margin-top:7px;">${coordinatorResult.error?projectSectionErrorC1('المنسقين',coordinatorResult.error):coords.length?coords.map(c=>`<span class="chip teal">${esc(c.full_name)} · ${c.role_type==='main'?'رئيسي':'نائب'}</span>`).join(' '):'—'}</div>
         </div>
       </div>
       <div class="card">
@@ -12648,7 +12849,7 @@ async function renderProjectSetupV11(proj){
           </div>
           ${state.currentProjectCanManage?`<button class="btn btn-amber btn-sm" onclick="openAddProjectVersionV11('${proj.id}')">+ تعديل قواعد</button>`:''}
         </div>
-        ${versions.length?`<div class="table-wrap"><table><thead><tr><th>الإصدار</th><th>النوع</th><th>ساري من</th><th>السبب</th><th>الحالة</th></tr></thead><tbody>
+        ${versionResult.error?projectSectionErrorC1('تعديلات القواعد',versionResult.error):versions.length?`<div class="table-wrap"><table><thead><tr><th>الإصدار</th><th>النوع</th><th>ساري من</th><th>السبب</th><th>الحالة</th></tr></thead><tbody>
           ${versions.map(v=>`<tr><td class="nums">V${v.version_no}</td><td>${versionTypeArRC1E(v.version_type)}</td><td class="nums">${fmtDate(v.effective_from)}</td><td>${esc(v.reason)}</td><td>${esc(v.status)}</td></tr>`).join('')}
         </tbody></table></div>`:`<div class="empty-state">لا توجد تعديلات قواعد مسجلة.</div>`}
       </div>`;
@@ -12656,6 +12857,7 @@ async function renderProjectSetupV11(proj){
 }
 
 async function openAddProjectVersionV11(projectId){
+  if(!requireProjectEditC1(projectId)) return;
   showModal('projectVersionV11Modal',`
     <div class="modal-box">
       <h3>+ تسجيل تعديل قواعد</h3>
@@ -12665,7 +12867,7 @@ async function openAddProjectVersionV11(projectId){
           <option value="rule_change">قاعدة تشغيل</option><option value="financial_change">تغيير مالي / أسعار</option>
           <option value="structure_change">تغيير هيكل</option><option value="target_change">تغيير مستهدف</option><option value="other">آخر</option>
         </select></div>
-        <div class="field"><label>ساري من *</label><input id="pv_date" type="date" class="input" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="field"><label>ساري من *</label><input id="pv_date" type="date" class="input" value="${todayProjectC1()}"></div>
       </div>
       <div class="field"><label>سبب التعديل *</label><textarea id="pv_reason" class="input" rows="3"></textarea></div>
       <div class="field"><label>ملخص التغيير</label><textarea id="pv_notes" class="input" rows="2"></textarea></div>
@@ -12673,19 +12875,20 @@ async function openAddProjectVersionV11(projectId){
     </div>`);
 }
 async function submitProjectVersionV11(projectId){
-  const effective=document.getElementById('pv_date').value;
-  const reason=document.getElementById('pv_reason').value.trim();
-  const notes=document.getElementById('pv_notes').value.trim()||null;
-  if(!effective||!reason) return showToast('التاريخ والسبب مطلوبان','danger');
-  try{
+  await runProjectWriteC1(projectId,'version','projectVersionV11Modal',async()=>{
+    const effective=document.getElementById('pv_date').value;
+    const reason=document.getElementById('pv_reason').value.trim();
+    const notes=document.getElementById('pv_notes').value.trim()||null;
+    const type=document.getElementById('pv_type').value;
+    if(!validProjectDateC1(effective)||!reason) throw new Error('تاريخ سريان صالح وسبب التعديل مطلوبان');
+    if(!['rule_change','financial_change','structure_change','target_change','other'].includes(type)) throw new Error('نوع تعديل القواعد غير صالح');
     await callRPC('create_project_rule_version_v11',{
-      p_project_id:projectId,p_effective_from:effective,p_reason:reason,
-      p_version_type:document.getElementById('pv_type').value,
+      p_project_id:projectId,p_effective_from:effective,p_reason:reason,p_version_type:type,
       p_cycle_id:null,p_change_summary:{summary:notes},p_notes:notes
     });
     closeModal('projectVersionV11Modal');showToast('✅ تم تسجيل تعديل القواعد','success');
-    renderProjectSetupV11(state.activeProjectCache);
-  }catch(e){showToast(e.message,'danger');}
+    if(state.activeProjectId===projectId&&state.projectTab==='setup') await renderProjectSetupV11(state.activeProjectCache);
+  });
 }
 
 /* ---------------- Training ---------------- */
