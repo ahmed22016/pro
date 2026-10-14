@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Unified Work Platform · V11.0 · build C1.19 · partial valid Excel import -->
+<!-- Unified Work Platform · V11.0 · build C1.22.2 (stability release: full paging, patched SheetJS on demand) -->
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -7,15 +7,19 @@
 <title>منصة العمل الموحد</title>
 <meta name="theme-color" content="#0F2238">
 <meta name="application-name" content="منصة العمل الموحد">
-<meta name="app-build" content="V11.0-C1.19">
+<meta name="app-build" content="V11.0-C1.22.2">
 
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://cdn.sheetjs.com" crossorigin>
+<link rel="preconnect" href="https://gqeshukjpmbvzmkqyhgx.supabase.co" crossorigin>
 <!-- مكتبات -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <!-- خطوط -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;600;700&display=swap"></noscript>
 
 <style>
 /* ============================================================
@@ -1447,12 +1451,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--teal);box-shadow:0 0 
 <div class="toast" id="toast"></div>
 <div id="modals-container"></div>
 <script>
-/* ============================================================
- * platform-v10.js — Core
- * الجزء 1: الاتصال، الحالة، الأدوات، المصادقة، Router، Navigation
- * ============================================================ */
 
-/* ============ الاتصال ============ */
 const SUPABASE_URL = 'https://gqeshukjpmbvzmkqyhgx.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxZXNodWtqcG1idnpta3F5aGd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1NDcyMzQsImV4cCI6MjEwNTEyMzIzNH0.nh61ORUZH3KTXeUSl5unKVrl_Fh7pgF6-2NaBpoEnzU';
 
@@ -1529,45 +1528,37 @@ async function loadAllDistrictsPagedV11(force=false){
 
 let pendingCounts = { pending_seating: 0, pending_structure: 0, pending_edit_requests: 0, pending_workforce: 0 };
 
-
 const state = {
-  // المستوى العام
+
   level: 'dashboard',
-  
-  // التنقل
+
   activeGovId: null,
   activeProjectId: null,
   activeWorkerId: null,
   activeUserId: null,
-  
-  // التبويب الحالي
+
   tab: 'dashboard',
-  
-  // تبويبات داخل المشروع
+
   projectTab: 'overview',
-  
-  // الفلاتر
+
   workerFilter: 'all',
   workerSearch: '',
   workerGovFilter: 'all',
   workerProjectFilter: 'all',
   workerTypeFilter: 'all',
   workerPage: 1,
-  
-  // cache
+
   projectsCache: null,
   activeProjectCache: null,
   activeWorkerCache: null,
   userStatsCache: null,
-  
-  // audit
+
   auditFilter: 'all',
   auditSearch: ''
 };
 
 const WORKERS_PAGE_SIZE = 30;
 
-/* ============  Wizard State ============ */
 const wizard = {
   step: 1,
   data: {
@@ -1582,7 +1573,6 @@ const wizard = {
   }
 };
 
-/* ============  أدوات مساعدة ============ */
 function showToast(msg, kind){
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -1644,7 +1634,6 @@ function daysBetween(date1, date2){
   return Math.ceil((d2 - d1) / (1000 * 60 * 60 * 24));
 }
 
-/* ============  تسميات ============ */
 function roleAr(r){
   return {
     admin:'مشرف عام',
@@ -1764,16 +1753,11 @@ function phaseTypeAr(type){
   }[type] || type;
 }
 
-/* ============  الصلاحيات ============ */
 function myGovIds(){
   return (profile?.profile_governorates || []).map(g => g.governorate_id);
 }
 
 function isRole(r){ return profile?.role === r; }
-
-// ═══════════════════════════════════════════════════════════════════
-// V10 Evolution — Helper Functions
-// ═══════════════════════════════════════════════════════════════════
 
 function isAdmin(){ return profile?.role === 'admin'; }
 function isProjectManager(){ return profile?.role === 'project_manager'; }
@@ -1806,14 +1790,13 @@ function canImportExcel(){
 }
 
 function canExportReports(){
-  return profile?.role !== 'followup';
+  return !c1202Restricted();
 }
 
 function isReadOnly(){
   return profile?.role === 'followup';
 }
 
-/* ============ Worker-specific permissions ============ */
 function canViewWorkers(){ return ['admin','region','office','committee','followup'].includes(profile?.role); }
 function canCreateWorker(){ return ['admin','region','office'].includes(profile?.role); }
 function canEditWorkerMaster(){ return ['admin','region','office'].includes(profile?.role); }
@@ -1823,7 +1806,7 @@ function canQuickAssignWorker(){ return ['admin','region','office'].includes(pro
 function canChangeWorkerStatus(){ return profile?.role === 'admin'; }
 function canDeleteWorker(){ return profile?.role === 'admin'; }
 function canImportWorkers(){ return ['admin','region','office'].includes(profile?.role); }
-function canExportWorkers(){ return ['admin','region','office'].includes(profile?.role); }
+function canExportWorkers(){ return ['admin','project_manager'].includes(profile?.role); }
 function canViewWorkerAssignments(){ return ['admin','region','office','followup'].includes(profile?.role); }
 function canViewWorkerFinance(){ return ['admin','region','followup'].includes(profile?.role); }
 function canUploadWorkerMedia(){ return ['admin','region','office'].includes(profile?.role); }
@@ -1848,7 +1831,6 @@ function validateWorkerMediaFile(file){
     throw new Error(`الملف "${file.name}" غير مدعوم. المسموح JPG / PNG / WEBP`);
   }
 
-  // نسمح باختيار صورة أصلية كبيرة نسبيًا ثم نضغطها قبل الرفع.
   const maxOriginal = 15 * 1024 * 1024;
 
   if(file.size > maxOriginal){
@@ -1856,7 +1838,7 @@ function validateWorkerMediaFile(file){
   }
 }
 
-const WORKER_MEDIA_MAX_BYTES = 512 * 1024; // 0.5 MB
+const WORKER_MEDIA_MAX_BYTES = 512 * 1024; 
 
 function loadImageForCompression(file){
   return new Promise((resolve, reject) => {
@@ -1890,14 +1872,12 @@ function canvasToJpegBlob(canvas, quality){
 async function prepareWorkerMediaFile(file, mediaType){
   validateWorkerMediaFile(file);
 
-  // إذا كانت أصلًا أقل من 0.5MB فلا نعيد ضغطها.
   if(file.size <= WORKER_MEDIA_MAX_BYTES){
     return file;
   }
 
   const img = await loadImageForCompression(file);
 
-  // صور البطاقة تحتاج وضوحًا أعلى من الصورة الشخصية.
   const preferredMaxDimension =
     mediaType === 'profile_photo' ? 1200 : 1600;
 
@@ -1907,7 +1887,6 @@ async function prepareWorkerMediaFile(file, mediaType){
   let width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
   let height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
 
-  // نحاول أولًا الحفاظ على الأبعاد، ثم نقللها تدريجيًا عند الحاجة.
   const qualities = [0.88, 0.82, 0.76, 0.70, 0.64, 0.58, 0.52];
 
   for(let resizeRound = 0; resizeRound < 5; resizeRound++){
@@ -1948,8 +1927,6 @@ async function prepareWorkerMediaFile(file, mediaType){
     `تعذر ضغط الصورة "${file.name}" إلى أقل من 0.5MB مع الحفاظ على وضوح مناسب`
   );
 }
-
-
 
 const _workerMediaPending = new Map();
 
@@ -2046,7 +2023,6 @@ function postWorkerMediaForm(fields, targetName){
   setTimeout(() => form.remove(), 1000);
 }
 
-
 function waitMs(ms){
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -2095,10 +2071,8 @@ async function uploadWorkerMediaViaAppsScript(workerId, mediaType, file){
     throw new Error('انتهت جلسة الدخول');
   }
 
-  // ضغط الصورة محليًا قبل تحويلها Base64 وإرسالها.
   const preparedFile = await prepareWorkerMediaFile(file, mediaType);
 
-  // احفظ معرف النسخة الحالية حتى نعرف أن Apps Script سجّل نسخة جديدة فعلاً.
   const before = await getWorkerMediaMarker(workerId, mediaType);
   const previousFileId = before?.drive_file_id || null;
 
@@ -2240,11 +2214,9 @@ function renderWorkerMediaCard(workerId, mediaMap){
     </div>`;
 }
 
-
 function canManageWorkerBadges(){
   return ['admin','project_manager','region','office'].includes(profile?.role);
 }
-
 
 function postWorkerMediaFormInsideWindow(popup, fields){
   if(!popup || popup.closed){
@@ -2290,7 +2262,6 @@ async function issueAndPrintWorkerBadge(assignmentId){
   try {
     assertWorkerMediaAppsScriptReady();
 
-    // نفتح النافذة فور ضغطة المستخدم حتى لا يمنعها المتصفح.
     popup = window.open('', '_blank');
 
     if(!popup){
@@ -2308,7 +2279,6 @@ async function issueAndPrintWorkerBadge(assignmentId){
     );
     popup.document.close();
 
-    // تأكد من وجود بطاقة سارية/أنشئها أولًا.
     const badge = await callRPC('issue_worker_badge', {
       p_assignment_id: assignmentId
     });
@@ -2317,7 +2287,6 @@ async function issueAndPrintWorkerBadge(assignmentId){
       throw new Error('تعذر إصدار البطاقة');
     }
 
-    // أنشئ تذكرة طباعة مستقلة عن QR.
     const ticket = await callRPC('create_worker_badge_print_ticket', {
       p_assignment_id: assignmentId
     });
@@ -2331,8 +2300,6 @@ async function issueAndPrintWorkerBadge(assignmentId){
       '?ticket=' +
       encodeURIComponent(ticket.print_ticket);
 
-    // رابط الطباعة أصبح يعتمد على ticket فقط، بدون action.
-    // نعرض مرحلة انتقال قصيرة ثم ننقل النافذة مباشرة.
     popup.document.open();
     popup.document.write(
       '<!doctype html><html lang="ar" dir="rtl">' +
@@ -2345,7 +2312,6 @@ async function issueAndPrintWorkerBadge(assignmentId){
     );
     popup.document.close();
 
-    // استخدام href مباشر بدل replace.
     popup.location.href = printUrl;
 
   } catch(err) {
@@ -2388,8 +2354,11 @@ function govCode(id){
   return (govList.find(g => g.id === id) || {}).code || 'XX';
 }
 
-/* ============  RPC Helper ============ */
 async function callRPC(functionName, params = {}){
+  if(['c120_dashboard','c120_governorates'].includes(functionName))return c12023ReadRpc(functionName,params);
+  if(['c1202_assignments','c1202_structure_slots','c1202_project_cards'].includes(functionName))
+    return c12023Cached(functionName,params,()=>c12022Request(functionName,params),40000);
+  if(String(functionName).startsWith('c1202_'))return c12022Request(functionName,params);
   try {
     const { data, error } = await sb.rpc(functionName, params);
     if(error){
@@ -2402,7 +2371,6 @@ async function callRPC(functionName, params = {}){
   }
 }
 
-/* ============  Modals Helper ============ */
 function showModal(id, html){
   const container = document.getElementById('modals-container');
   const existing = document.getElementById(id);
@@ -2425,7 +2393,6 @@ function closeAllModals(){
   document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
 }
 
-/* ============  Loading / Error / Empty ============ */
 function showLoading(containerId, message = 'جارِ التحميل...'){
   const el = document.getElementById(containerId);
   if(el){
@@ -2465,8 +2432,297 @@ function showEmpty(containerId, icon, title, desc = '', actionHtml = ''){
   }
 }
 
-/* ============  Excel Helpers ============ */
-function exportToExcel(sheets, filename){
+function c12022AllowedIds(){ return [...(state.c1202GovIds||[])].filter(Number.isFinite); }
+function c12022ScopedGov(row){
+  const id=row?.governorate_id??row?.assignment_governorate_id??row?.execution_governorate_id;
+  if(id!==null&&id!==undefined&&id!=='')return Number(id);
+  const name=row?.governorate_name??row?.assignment_governorate_name??row?.execution_governorate_name;
+  const g=govList.find(x=>String(x.name)===String(name));return g?.id??null;
+}
+async function c12022Request(n,p){
+  const pid=p.p_project_id||state.activeProjectCache?.id;
+
+  if(n==='c1202_project_cards'){
+    const scope=await callRPC('c120_dashboard',{p_project_id:p.p_project_id||null,p_governorate_id:null});
+    const ids=(scope?.projects||[]).map(x=>x.id).filter(Boolean);
+    if(!ids.length)return [];
+    const {data:projects,error}=await sb.from('projects')
+      .select('id,name,code,status,start_date,end_date,project_mode,created_at').in('id',ids);
+    if(error)throw error;
+    return await Promise.all((projects||[]).map(async project=>{
+      const [d,g]=await Promise.all([
+        (p.p_project_id||ids.length===1)?Promise.resolve(scope):callRPC('c120_dashboard',{p_project_id:project.id,p_governorate_id:null}),
+        callRPC('c120_governorates',{p_project_id:project.id})
+      ]);
+      const govIds=(g||[]).map(x=>Number(x.id)).filter(Number.isFinite);
+      let slots=0,filled=0;
+      if(govIds.length){
+        const q=sb.from('structure_slots').select('id,status').eq('project_id',project.id).in('governorate_id',govIds);
+        const {data:sl,error:se}=await q;
+        if(se)throw se;
+        slots=(sl||[]).length;filled=(sl||[]).filter(x=>x.status==='filled').length;
+      }
+      const units=Number(d?.units||0),complete=Number(d?.completed_units||0);
+      return {...project,slots,filled,assignments:Number(d?.active_assignments||0),
+        units,completedUnits:complete,completionPct:units?Math.round(100*complete/units):0};
+    }));
+  }
+  if(n==='c1202_structure_slots'){
+    const ids=c12022AllowedIds();if(!ids.length)return [];
+    const {data,error}=await sb.from('structure_slots')
+      .select('*, individuals(full_name, username, national_id, phone)')
+      .eq('project_id',p.p_project_id).in('governorate_id',ids);
+    if(error)throw error;return (data||[]).sort(c1202SlotOrder);
+  }
+  if(n==='c1202_assignments'){
+    const ids=c12022AllowedIds();if(!ids.length)return [];
+    const pages=await Promise.all(ids.map(g=>callRPC('get_active_assignments',{
+      p_project_id:p.p_project_id,p_governorate_id:g
+    })));
+    const m=new Map();
+    for(const row of pages.flat()){
+      const gid=c12022ScopedGov(row);
+      if(!c1202AllowGov(gid))continue;
+      m.set(row.assignment_id,row);
+    }
+    return [...m.values()].sort((a,b)=>c1202GovOrder(c12022ScopedGov(a),c12022ScopedGov(b))||
+       c1202CodeOrder.compare(String(a.slot_code||''),String(b.slot_code||'')));
+  }
+  if(n==='c1202_workforce_rules'){
+    const rows=await callRPC('get_project_workforce_rules_rc1j',p);
+    return (rows||[]).filter(x=>c1202AllowGov(c12022ScopedGov(x)))
+      .sort((a,b)=>c1202GovOrder(c12022ScopedGov(a),c12022ScopedGov(b)));
+  }
+  if(n==='c1202_execution_report'){
+    const ids=c12022AllowedIds();if(!ids.length)return [];
+    const lists=await Promise.all(ids.map(g=>callRPC('get_field_execution_researcher_report_v11',{
+      p_project_id:p.p_project_id,p_cycle_id:p.p_cycle_id??null,p_governorate_id:g
+    })));
+    return lists.flat().filter(r=>c1202AllowGov(c12022ScopedGov(r))).sort(c1202SlotOrder);
+  }
+  if(n==='c1202_training_units'){
+    const rows=await callRPC('get_training_units_v11',p);
+    return (rows||[]).filter(u=>{
+      const gs=Array.isArray(u.governorate_ids)?u.governorate_ids.map(Number):[];
+      return gs.length?gs.some(c1202AllowGov):c1202AllowGov(u.execution_governorate_id);
+    }).map(u=>{
+      const allow=Array.isArray(u.governorate_ids)?u.governorate_ids.map(Number).filter(c1202AllowGov)
+          :[u.execution_governorate_id].filter(c1202AllowGov);
+      return {...u,governorate_ids:allow,governorate_names:allow.map(id=>govList.find(g=>Number(g.id)===Number(id))?.name||''),
+        trainee_count:null,expected_attendance:null,recorded_attendance:null};
+    });
+  }
+  if(n==='c1202_training_participants'){
+    const [all,units]=await Promise.all([
+      callRPC('get_training_operation_participants_v11',p),
+      c12022Request('c1202_training_units',p)
+    ]);
+    const codes=new Set(units.map(x=>String(x.unit_code))),uids=new Set(units.map(x=>String(x.id)));
+    return (all||[]).filter(r=>c1202AllowGov(c12022ScopedGov(r))&&(
+      uids.has(String(r.unit_id))||codes.has(String(r.unit_code))
+    )).map(r=>({id:r.participant_id,participant_id:r.participant_id,individual_id:r.individual_id,
+      full_name:r.full_name,training_role:r.training_role,worker_code:r.worker_code,
+      assignment_governorate_id:c12022ScopedGov(r),assignment_governorate_name:r.assignment_governorate_name,
+      unit_id:r.unit_id,unit_code:r.unit_code,attendance_days:r.attendance_days,
+      contract_type:r.contract_type,participant_status:r.participant_status}));
+  }
+  if(n==='c1202_training_operations'){
+    const rows=await callRPC('get_training_operations_v11',p);
+    const out=[];
+    for(const r of rows||[]){
+      const u=await c12022Request('c1202_training_units',{p_event_id:r.id});
+      if(u.length)out.push({id:r.id,title:r.title,event_code:r.event_code,training_type:r.training_type,
+        delivery_mode:r.delivery_mode,start_date:r.start_date,end_date:r.end_date,
+        attendance_status:r.attendance_status,unit_count:u.length,
+        trainee_count:null,expected_attendance:null,recorded_attendance:null,attendance_percent:null});
+    }
+    return out;
+  }
+  if(n==='c1202_training_event_info'){
+    const units=await c12022Request('c1202_training_units',p);
+    if(!units.length)throw new Error('لا توجد نقطة تدريب تابعة لك في هذه العملية');
+    const {data,error}=await sb.from('training_events')
+      .select('id,project_id,title,event_code,training_type,delivery_mode,venue_type,location,start_date,end_date,attendance_status,status')
+      .eq('id',p.p_event_id).maybeSingle();
+    if(error)throw error;
+    if(!data)throw new Error('عملية التدريب غير موجودة');
+    if(!await callRPC('c120_can_access',{p_project_id:data.project_id,p_governorate_id:null}))
+      throw new Error('لا يوجد تصريح للمشروع');
+    return data;
+  }
+  if(n==='c1202_training_attendance'){
+    const {data:unit,error}=await sb.from('training_units').select('*').eq('id',p.p_unit_id).maybeSingle();
+    if(error)throw error;
+    const eventId=unit?.training_event_id||unit?.event_id;
+    if(!eventId)throw new Error('تعذر تحديد العملية التدريبية لنقطة الحضور');
+    const allowed=await c12022Request('c1202_training_units',{p_event_id:eventId});
+    if(!allowed.some(x=>String(x.id)===String(p.p_unit_id)))
+      throw new Error('نقطة التدريب خارج نطاقك');
+    const rows=await callRPC('get_training_unit_attendance_v11',p);
+    return (rows||[]).filter(x=>c1202AllowGov(c12022ScopedGov(x)))
+      .map(x=>({participant_id:x.participant_id,full_name:x.full_name,
+        assignment_governorate_name:x.assignment_governorate_name,
+        attendance_id:x.attendance_id,attendance_status:x.attendance_status,
+        recorded_by_name:x.recorded_by_name,recorded_at:x.recorded_at,
+        corrected_by_name:x.corrected_by_name,corrected_at:x.corrected_at,
+        can_record:x.can_record,can_correct:x.can_correct}));
+  }
+  throw new Error('وظيفة غير متاحة في إصدار HTML فقط: '+n);
+}
+
+function c1202Restricted(){return ['region','office','followup','committee'].includes(profile?.role);}
+function c1202CanFinance(){return !c1202Restricted() && (profile?.role==='admin' || (profile?.role==='project_manager' && state.currentProjectCanManage===true));}
+function c1202CanProjectLog(){return profile?.role==='admin' || profile?.role==='project_manager';}
+function c1202AssertExport(filename){
+ if(!c1202Restricted()) return true;
+ if(/^موقف_التنفيذ_/.test(String(filename||''))) return true;
+ showToast('صلاحيتك تسمح بتصدير موقف التنفيذ فقط','danger');return false;
+}
+const c1202CodeOrder = new Intl.Collator('en',{numeric:true,sensitivity:'base'});
+function c1202GetGovId(x){
+ if(x?.governorate_id!=null)return Number(x.governorate_id);
+ const g=govList.find(z=>String(z.code)===String(x?.governorate_code||'')||String(z.name)===String(x?.governorate_name||''));
+ return g?Number(g.id):null;
+}
+function c1202GovCode(id){return String(govList.find(x=>Number(x.id)===Number(id))?.code??id??'');}
+function c1202GovOrder(a,b){return c1202CodeOrder.compare(c1202GovCode(a),c1202GovCode(b));}
+function c1202SlotOrder(a,b){return c1202GovOrder(a.governorate_id,b.governorate_id)||c1202CodeOrder.compare(String(a.code??a.slot_code??a.researcher_code??''),String(b.code??b.slot_code??b.researcher_code??''));}
+function c1202AllowGov(id){return !c1202Restricted() || !!(state.c1202GovIds?.has(Number(id)));}
+function c1202ScopeRows(rows,field='governorate_id'){
+ return (rows||[]).filter(x=>c1202AllowGov(x[field])).sort(c1202SlotOrder);
+}
+function c1202Deny(label='هذه الصفحة'){
+ showToast('غير مصرح: '+label,'danger');
+ const b=document.getElementById('projectBody');if(b)b.innerHTML='<div class="empty-rich"><h3>غير مصرح بالاطلاع على هذا القسم</h3></div>';
+}
+async function c1202RenderLimitedOverview(proj,pg){
+ const body=document.getElementById('projectBody');
+ body.innerHTML='<div class="card"><h3>نظرة عامة — نطاق المشروع</h3><p class="subtle">جار تحميل الأعداد الفعلية للهيكل والتسكينات والإطار…</p></div>';
+ try{
+
+  const [metrics,slots]=await Promise.all([
+    c12023ReadRpc('c120_dashboard',{p_project_id:proj.id,p_governorate_id:null}),
+    c12023Cached('full-structure',{project:proj.id},async()=>{
+      const {data,error}=await sb.rpc('c12024_structure',{p_project_id:proj.id});
+      if(error)throw new Error(error.message);
+      if(!Array.isArray(data))throw new Error('استجابة الهيكل غير متوقعة');
+      return data;
+    },35000)
+  ]);
+  if(state.tab!=='project-detail'||state.projectTab!=='overview'||state.activeProjectId!==proj.id)return;
+  const structure=(slots||[]).filter(x=>c1202AllowGov(x.governorate_id));
+  const occupied=structure.filter(s=>!!s.individual_id).length;
+  const total=structure.length;
+  const assigned=Number(metrics.active_assignments);
+  const units=Number(metrics.units);
+  const complete=Number(metrics.completed_units);
+  const allowed=(pg||[]).filter(x=>c1202AllowGov(x.governorate_id)).sort((a,b)=>c1202GovOrder(a.governorate_id,b.governorate_id));
+  body.innerHTML=`<div class="v11-note">الأعداد للبيانات المصرح بها في هذا المشروع فقط. تقييد العرض لا يغني عن صلاحيات الخادم.</div>
+  <div class="kpi-grid">
+    <div class="kpi-card"><div class="num nums">${Number.isFinite(assigned)?fmtNum(assigned):'—'}</div><div class="lbl">تسكينات نشطة</div></div>
+    <div class="kpi-card"><div class="num nums">${fmtNum(total)}</div><div class="lbl">أكواد الهيكل</div></div>
+    <div class="kpi-card"><div class="num nums">${fmtNum(occupied)}</div><div class="lbl">خانات مسكّنة</div></div>
+    <div class="kpi-card"><div class="num nums">${fmtNum(total-occupied)}</div><div class="lbl">خانات شاغرة</div></div>
+    <div class="kpi-card"><div class="num nums">${Number.isFinite(units)?fmtNum(units):'—'}</div><div class="lbl">وحدات الإطار</div></div>
+    <div class="kpi-card success"><div class="num nums">${Number.isFinite(complete)?fmtNum(complete):'—'}</div><div class="lbl">وحدات مكتملة</div></div>
+  </div>
+  <div class="card"><h3>🏛️ نطاق مسؤوليتك بالمشروع</h3>${allowed.map(g=>`<span class="chip teal">${esc(govCode(g.governorate_id))} — ${esc(govName(g.governorate_id))}</span>`).join(' ')||'لا توجد محافظات مسندة'}</div>`;
+ }catch(err){if(state.tab==='project-detail'&&state.projectTab==='overview')showError('projectBody',err.message);}
+}
+
+async function c1202RenderExecutionOnlyReport(proj){
+ const body=document.getElementById('projectBody');
+ body.innerHTML='<div class="empty-state">جار تحميل موقف التنفيذ المصرح به...</div>';
+ try{
+  const rows=await callRPC('c1202_execution_report',{p_project_id:proj.id,p_cycle_id:proj.project_mode==='recurring'?(state.activeCycleId||null):null});
+  const data=rows||[];
+  const sum=k=>data.reduce((n,r)=>n+Number(r[k]||0),0);
+  body.innerHTML=`<div class="v11-section-title"><h3>📈 تقرير موقف التنفيذ — نطاق مسؤوليتك</h3></div>
+   <div class="kpi-grid">${[['target_count','المستهدف'],['full_count','استيفاء كامل'],['partial_count','استيفاء جزئي'],['excluded_count','مستبعد'],['in_progress_count','جاري'],['not_started_count','لم يبدأ']].map(([k,label])=>`<div class="kpi-card"><div class="num nums">${fmtNum(sum(k))}</div><div class="lbl">${label}</div></div>`).join('')}</div>
+   <div class="card"><button class="btn btn-primary" onclick="exportExecutionBalancesV11('${proj.id}')">⬇ تصدير موقف التنفيذ فقط</button></div>`;
+ }catch(e){showError('projectBody',e.message);}
+}
+
+const c12023ReadCache = new Map();
+const c12023CacheTTL = 55000;
+function c12023Key(label,args={}){
+ return String(profile?.id||'')+'|'+String(profile?.role||'')+'|'+label+'|'+JSON.stringify(args);
+}
+function c12023Cached(label,args,loader,ttl=c12023CacheTTL){
+ const key=c12023Key(label,args),now=Date.now(),old=c12023ReadCache.get(key);
+ if(old&&old.until>now)return old.value;
+ if(c12023ReadCache.size>85){
+  for(const [k,v] of c12023ReadCache){if(v.until<=now)c12023ReadCache.delete(k);}
+  if(c12023ReadCache.size>85)c12023ReadCache.clear();
+ }
+ const pending=Promise.resolve().then(loader);
+ c12023ReadCache.set(key,{until:now+ttl,value:pending});
+ pending.catch(()=>{if(c12023ReadCache.get(key)?.value===pending)c12023ReadCache.delete(key);});
+ return pending;
+}
+function c12023ClearCache(){
+ c12023ReadCache.clear();
+ projectListC15.rows=null;
+ state.c1202ProjectCard=null;
+}
+async function c12023ReadRpc(name,args={}){
+ const keyArgs={...args};
+ return c12023Cached('rpc:'+name,keyArgs,async()=>{
+  const t=performance.now();let timer;
+  try{
+   const {data,error}=await Promise.race([
+     sb.rpc(name,args),
+     new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error('تأخر تحميل '+name+' أكثر من 20 ثانية. حاول تحديث البيانات.')),20000))
+   ]);
+   if(error)throw new Error(error.message||'تعذر قراءة البيانات');
+   if(performance.now()-t>1300) console.info('[C1.20.2.3] '+name+': '+Math.round(performance.now()-t)+'ms');
+   return data;
+  }finally{clearTimeout(timer);}
+ },c12023CacheTTL);
+}
+async function c12023ProjectScope(pid){
+ return c12023Cached('project-scope',{pid},async()=>{
+   const [permitted,govs]=await Promise.all([
+      callRPC('c120_can_access',{p_project_id:pid,p_governorate_id:null}),
+      c1202Restricted()?c12023ReadRpc('c120_governorates',{p_project_id:pid}):Promise.resolve([])
+   ]);
+   if(permitted!==true)throw new Error('المشروع خارج نطاق صلاحيتك');
+   return {permitted,govs:govs||[]};
+ },60000);
+}
+function c12023RefreshProject(){
+ c12023ClearCache();
+ state.activeProjectCache=null;
+ route();
+}
+function c12023RefreshDashboard(){c12023ClearCache(); renderDashboard();}
+function c12023VisibleProjectStructureNotice(){
+ return `<div class="notice-box" style="margin:12px 0">
+   <b>عرض الأكواد المسكّنة من سجل التسكينات</b> — لا يشمل الأكواد الشاغرة التي لا تسمح قاعدة البيانات بعرضها لهذا الحساب.
+   لم يتم حذف أو إنشاء أي كود.</div>`;
+}
+ 
+async function c12024FindSlot(slotId){
+ if(c1202Restricted()){
+  const pid=state.activeProjectId;
+  if(!pid)throw new Error('افتح المشروع أولًا');
+  const rows=await c12023Cached('full-structure',{project:pid},async()=>{
+   const {data,error}=await sb.rpc('c12024_structure',{p_project_id:pid});
+   if(error)throw new Error(error.message);
+   return data||[];
+  },35000);
+  return (rows||[]).find(s=>s.id===slotId)||null;
+ }
+ const {data,error}=await sb.from('structure_slots').select('*').eq('id',slotId).maybeSingle();
+ if(error)throw new Error(error.message);
+ return data||null;
+}
+function c12024InvalidateStructure(pid){
+ c12023ReadCache.delete(c12023Key('full-structure',{project:pid}));
+}
+
+function exportToExcel__impl(sheets, filename){
+  if(!c1202AssertExport(filename)) return;
   if(typeof XLSX === 'undefined'){
     return showToast('مكتبة Excel لم تُحمّل', 'danger');
   }
@@ -2478,20 +2734,22 @@ function exportToExcel(sheets, filename){
   XLSX.writeFile(wb, filename);
   showToast('✅ تم تجهيز الملف', 'success');
 }
+function exportToExcel(...a){return ensureXLSXV11().then(()=>exportToExcel__impl(...a)).catch(e=>console.error(e));}
 
-/* ============ Project Assignments Tab ============ */
 async function renderProjectAssignmentsTab(proj){
   const body = document.getElementById('projectBody');
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
   
   try {
-    const assignments = await callRPC('get_active_assignments', {
-      p_project_id: proj.id,
-      p_governorate_id: null
-    });
+    const assignments = await callRPC(c1202Restricted()?'c1202_assignments':'get_active_assignments',
+      c1202Restricted()?{p_project_id:proj.id}:{p_project_id:proj.id,p_governorate_id:null});
     
-    const all = assignments || [];
-    
+    const all = (assignments || []).filter(a=>!c1202Restricted()||(
+       (a.governorate_id!=null&&c1202AllowGov(a.governorate_id)) ||
+       (a.governorate_id==null&&govList.some(g=>g.name===a.governorate_name&&c1202AllowGov(g.id)))
+      )).sort((a,b)=>c1202GovOrder(a.governorate_id??govList.find(g=>g.name===a.governorate_name)?.id,
+       b.governorate_id??govList.find(g=>g.name===b.governorate_name)?.id)||c1202CodeOrder.compare(String(a.slot_code||''),String(b.slot_code||'')));
+
     body.innerHTML = `
       <div class="card">
         <div class="flex-between" style="margin-bottom:14px;">
@@ -2576,7 +2834,6 @@ async function renderProjectAssignmentsTab(proj){
   }
 }
 
-/* ============ Project Finance Tab ============ */
 async function renderProjectFinanceTab(proj){
   const body = document.getElementById('projectBody');
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
@@ -2673,7 +2930,6 @@ async function renderProjectFinanceTab(proj){
   }
 }
 
-/* ============ Project Performance Tab ============ */
 async function renderProjectPerformanceTab(proj){
   const body = document.getElementById('projectBody');
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
@@ -2767,7 +3023,6 @@ async function renderProjectPerformanceTab(proj){
   }
 }
 
-/* ============  Boot ============ */
 async function boot(){
   if(!window.supabase || !window.supabase.createClient){
     document.getElementById('app').innerHTML = `
@@ -2783,6 +3038,20 @@ async function boot(){
   }
   
   sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  (function(){
+    const rpc0=sb.rpc.bind(sb);
+    sb.rpc=function(fn,...rest){
+      const q=rpc0(fn,...rest), then0=q.then.bind(q);
+      q.then=(ok,fail)=>then0(r=>{
+        if(r&&r.error&&(r.error.code==='PGRST202'||/Could not find the function/i.test(r.error.message||''))){
+          console.error('Missing or mismatched server function:',fn,r.error);
+          r.error=Object.assign({},r.error,{message:'دالة الخادم «'+fn+'» غير مثبّتة أو لا تطابق هذا الإصدار. ثبّت ملف SQL المناسب ثم أعد المحاولة.'});
+        }
+        return ok?ok(r):r;
+      },fail);
+      return q;
+    };
+  })();
   
   const { data: { session: sessionData } } = await sb.auth.getSession();
 session = sessionData;
@@ -2794,7 +3063,6 @@ session = sessionData;
   await loadProfile();
 }
 
-/* ============ Login ============ */
 function renderLoginScreen(){
   document.getElementById('app').innerHTML = `
     <main class="auth">
@@ -2819,7 +3087,7 @@ function renderLoginScreen(){
             <input id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••" dir="ltr" required>
           </div>
           <button class="login-btn" id="btnLogin" type="submit">دخول</button>
-          <div class="auth-build nums">الإصدار 11.0 · C1.18</div>
+          <div class="auth-build nums">الإصدار 11.0 · C1.22.2</div>
         </form>
       </section>
     </main>
@@ -2862,9 +3130,72 @@ async function doLogout(){
   location.reload();
 }
 
-/* ============ Load Profile ============ */
 let startupPendingC17=Promise.resolve();
+
+async function fetchAllPagedV11(make,size=1000){
+  /* C1.22: uses the exact server count; the effective server cap is detected from the first page and any shortfall is reported as an error */
+  const first=await make({count:'exact'}).range(0,size-1);
+  if(first.error) return {data:null,error:first.error};
+  let all=first.data||[];
+  let total=first.count;
+  if(total==null){
+    const head=await make({count:'exact',head:true});
+    if(head.error) return {data:null,error:head.error};
+    total=head.count;
+  }
+  if(total==null) return {data:null,error:new Error('تعذر التحقق من اكتمال السجلات (الإجمالي غير متاح من الخادم)')};
+  if(all.length>=total) return {data:all,error:null};
+  if(all.length===0) return {data:null,error:new Error('لم يُرجع الخادم أي صفوف رغم أن الإجمالي '+total)};
+  const step=all.length, starts=[];
+  for(let st=step;st<total;st+=step) starts.push(st);
+  const pages=new Array(starts.length);
+  for(let i=0;i<starts.length;i+=4){
+    const slice=starts.slice(i,i+4);
+    const res=await Promise.all(slice.map(st=>make().range(st,st+step-1)));
+    for(let k=0;k<res.length;k++){
+      if(res[k].error) return {data:null,error:res[k].error};
+      pages[i+k]=res[k].data||[];
+    }
+  }
+  pages.forEach(p=>{all=all.concat(p);});
+  if(all.length<total) return {data:null,error:new Error('لم يكتمل جلب السجلات: '+all.length+' من '+total)};
+  return {data:all,error:null};
+}
+
+/* C1.22: fetch rows by a list of key values in chunks (no dependence on table size or the row cap) */
+async function fetchByKeysV11(table,col,keys,chunk=150){
+  const list=[...new Set((keys||[]).map(String).filter(Boolean))];
+  let all=[];
+  for(let i=0;i<list.length;i+=chunk*4){
+    const parts=[];
+    for(let j=i;j<Math.min(list.length,i+chunk*4);j+=chunk) parts.push(list.slice(j,j+chunk));
+    const res=await Promise.all(parts.map(p=>sb.from(table).select('*').in(col,p)));
+    for(const r of res){ if(r.error) return {data:null,error:r.error}; all=all.concat(r.data||[]); }
+  }
+  return {data:all,error:null};
+}
+
+/* C1.22: load SheetJS (patched release) only when an import/export needs it */
+const XLSX_URL_V11='https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+let _xlsxPromiseV11=null;
+function ensureXLSXV11(){
+  if(window.XLSX&&window.XLSX.read) return Promise.resolve();
+  if(_xlsxPromiseV11) return _xlsxPromiseV11;
+  _xlsxPromiseV11=new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src=XLSX_URL_V11; s.async=true;
+    s.onload=()=>window.XLSX&&window.XLSX.read?resolve():reject(new Error('مكتبة Excel لم تعمل بعد التحميل'));
+    s.onerror=()=>{_xlsxPromiseV11=null;s.remove();reject(new Error('تعذر تحميل مكتبة Excel. تحقق من الاتصال ثم أعد المحاولة.'));};
+    document.head.appendChild(s);
+  });
+  _xlsxPromiseV11.catch(e=>{try{showToast(e.message,'danger');}catch(_){}});
+  return _xlsxPromiseV11;
+}
+
 async function loadProfile(){
+   
+  const govP=Promise.resolve(sb.from('governorates').select('*').order('code'));
+  const regP=Promise.resolve(sb.from('regions').select('id, code, name, region_governorates(governorate_id)').order('id'));
   const { data, error } = await sb.from('profiles')
     .select('*, profile_governorates(governorate_id)')
     .eq('id', session.user.id)
@@ -2897,21 +3228,16 @@ async function loadProfile(){
   }
   
   profile = data;
-  
-  // تحديث last_login_at
+
   sb.from('profiles')
     .update({ last_login_at: new Date().toISOString() })
     .eq('id', profile.id)
     .then(() => {});
-  
-  // تحميل المحافظات
-  const { data: govs } = await sb.from('governorates').select('*').order('code');
+
+  const { data: govs } = await govP;
   govList = govs || [];
 
-  // تحميل الأقاليم الرسمية الأربعة وربطها بالمحافظات
-  const { data: regionRows, error: regionsError } = await sb.from('regions')
-    .select('id, code, name, region_governorates(governorate_id)')
-    .order('id');
+  const { data: regionRows, error: regionsError } = await regP;
 
   if(!regionsError){
     regionsCache = regionRows || [];
@@ -2924,8 +3250,7 @@ async function loadProfile(){
     regionGovMap = {};
     console.warn('Regions are not available:', regionsError.message);
   }
-  
-  // C1.7: the full directory is fetched only by downloadFrameTemplateV11.
+
   const loginUserC17=profile.id;
   startupPendingC17=refreshPendingCounts();
   renderApp();
@@ -2934,32 +3259,6 @@ async function loadProfile(){
   }).catch(err=>console.warn('Pending counts:',err));
 }
 
-async function refreshPendingCounts(){
-  try {
-    const { data } = await sb.from('v_pending_counts').select('*').maybeSingle();
-    pendingCounts = data || {
-      pending_seating: 0,
-      pending_structure: 0,
-      pending_edit_requests: 0,
-      pending_workforce: 0
-    };
-  } catch(e) {
-    pendingCounts = {
-      pending_seating: 0,
-      pending_structure: 0,
-      pending_edit_requests: 0,
-      pending_workforce: 0
-    };
-  }
-  try {
-    const { count } = await sb.from('individuals').select('id', {count:'exact', head:true}).not('requested_governorate_id', 'is', null);
-    pendingCounts.pending_transfers = count || 0;
-  } catch(e) {
-    pendingCounts.pending_transfers = 0;
-  }
-}
-
-/* ============  App Shell ============ */
 function renderApp(){
   document.getElementById('app').innerHTML = `
     <div id="sidebar">
@@ -2995,7 +3294,6 @@ function renderApp(){
   route();
 }
 
-/* ============ Navigation ============ */
 function isNavActive(id){
   if(id === 'workers'){
     return ['workers','worker-detail'].includes(state.tab);
@@ -3092,9 +3390,6 @@ function setBreadcrumb(parts){
   }).join('<span class="sep">›</span>');
 }
 
-
-/* ---------------- V11 RC1M: Progressive / hierarchical navigation ---------------- */
-
 function projectTabLabelRC1K(tab){
   return {
     overview:'نظرة عامة',
@@ -3120,7 +3415,7 @@ function returnToProjectRC1K(tab='overview'){
 
   state.tab='project-detail';
   state.projectTab=tab || 'overview';
-  state.activeProjectCache=null;
+
   route();
 }
 
@@ -3185,14 +3480,10 @@ function renderHeaderNavigationRC1K(){
 }
 
 async function refreshAfterAssignmentChangeRC1K(){
-  // The router is the source of truth for navigation.
-  // If the modal was opened inside a project tab, this keeps the user there.
-  // If it was opened from the standalone assignments page, it refreshes that page.
+
   await route();
 }
 
-
-/* ============ Navigation Helpers ============ */
 function goToDashboard(){
   state.tab = 'dashboard';
   state.activeGovId = null;
@@ -3207,6 +3498,7 @@ function goToGovernorates(){
 }
 
 function goToProjects(){
+  state.c1202GovIds=null;state.c1202ProjectCard=null;
   state.tab = 'projects';
   state.activeProjectId = null;
   state.activeProjectCache = null;
@@ -3259,13 +3551,11 @@ function goToAdmin(){
   route();
 }
 
-// ═══ V10 Evolution ═══
 function goToCoordinator(){ state.tab = 'coordinator'; route(); }
 function goToWorkforcePlan(){ state.tab = 'workforce-plan'; route(); }
 function goToRates(){ state.tab = 'rates'; route(); }
 function goToExceptions(){ state.tab = 'exceptions'; route(); }
 function goToConflicts(){ state.tab = 'conflicts'; route(); }
-
 
 function goToAudit(){
   state.tab = 'audit';
@@ -3279,15 +3569,22 @@ function openGovernorate(govId){
 }
 
 function openProject(projectId, tab = 'overview'){
+  const known=projectListC15.rows?.find(p=>p.id===projectId);
   state.activeProjectId = projectId;
-  state.activeProjectCache = null;
+  state.activeProjectCache = known ? {...known} : null;
   state.projectTab = tab;
   state.tab = 'project-detail';
   route();
 }
 
 function openProjectTab(tab){
+  if(tab==='finance'&&!c1202CanFinance())return c1202Deny('المالية');
+  if(tab==='log'&&!c1202CanProjectLog())return c1202Deny('سجل المشروع');
+  if(tab==='quality'&&c1202Restricted())return c1202Deny('الجزاءات المالية');
+  if(tab==='cycles'&&c1202Restricted())return c1202Deny('إدارة الدورات');
   state.projectTab = tab;
+  const body=document.getElementById('projectBody');
+  if(body) body.innerHTML='<div class="empty-rich"><span class="spinner"></span><h3>جار فتح القسم...</h3></div>';
   route();
 }
 
@@ -3298,8 +3595,8 @@ function openWorker(workerId){
   route();
 }
 
-/* ============ Router ============ */
 async function route(){
+  state.c12023NavEpoch=(state.c12023NavEpoch||0)+1;
   renderNav();
   
   const titles = {
@@ -3331,14 +3628,12 @@ async function route(){
   
   document.getElementById('pageTitle').textContent = titles[state.tab] || 'لوحة المتابعة';
   renderHeaderNavigationRC1K();
-  
-  // الشاشات التي تحتاج مشروع محدد
+
   const needsProject = [
     'assignments', 'units', 'performance', 'training', 'payments',
     'seating-requests'
   ].includes(state.tab);
-  
-  // populate project picker if needed
+
   let projectPicker = document.getElementById('projectPicker');
   if(needsProject){
     if(!projectPicker){
@@ -3396,8 +3691,7 @@ async function route(){
     'exceptions': renderExceptions,
     'conflicts': renderConflicts
   };
- 
-  
+
   const fn = routes[state.tab] || renderDashboard;
   
   try {
@@ -3438,376 +3732,13 @@ function setActiveProject(id){
   route();
 }
 
-/* ============================================================
- * ⬇️ الشاشات الرئيسية ستُضاف في الردود التالية (2, 3, 4)
- * ============================================================ */
-
-/* ============================================================
- * platform-v10.js — Screens Part 1
- * Dashboard + Admin + Users + Workers + Governorates
- * ============================================================ */
-
-/* ============ Dashboard ============ */
-async function renderDashboard(){
-  const c = document.getElementById('content');
-  showLoading('content', 'جارِ تحميل لوحة المتابعة...');
-  
-  try {
-    const role = profile.role;
-    let stats = {
-      workers: 0,
-      activeWorkers: 0,
-      projects: 0,
-      activeProjects: 0,
-      assignments: 0,
-      activeAssignments: 0,
-      units: 0,
-      completedUnits: 0,
-      totalPaid: 0
-    };
-    
-    // C1.7: independent metrics run concurrently; count queries return no rows.
-    const metricQueriesC17 = [
-      ['workers',sb.from('individuals').select('id',{count:'exact',head:true})],
-      ['activeWorkers',sb.from('individuals').select('id',{count:'exact',head:true}).eq('status','active')],
-      ['projects',projectQueryC15(sb.from('projects').select('id',{count:'exact',head:true}))],
-      ['activeProjects',sb.from('projects').select('id',{count:'exact',head:true}).eq('status','active')],
-      ['assignments',sb.from('assignments').select('id',{count:'exact',head:true})],
-      ['activeAssignments',sb.from('assignments').select('id',{count:'exact',head:true}).eq('status','active')],
-      ['units',sb.from('work_units').select('id',{count:'exact',head:true})],
-      ['completedUnits',sb.from('work_units').select('id',{count:'exact',head:true}).eq('status','completed')]
-    ];
-    const [metricResultsC17,paymentsResultC17,userStatsC17] = await Promise.all([
-      Promise.all(metricQueriesC17.map(async ([key,query])=>{
-        const result=await query;
-        if(result.error) throw result.error;
-        return [key,result.count||0];
-      })),
-      sb.from('payments').select('amount').eq('status','paid'),
-      role==='admin' ? callRPC('get_user_stats').catch(()=>null) : Promise.resolve(null),
-      startupPendingC17
-    ]);
-    if(paymentsResultC17.error) throw paymentsResultC17.error;
-    metricResultsC17.forEach(([key,value])=>{stats[key]=value;});
-    stats.totalPaid=(paymentsResultC17.data||[]).reduce((sum,p)=>sum+parseFloat(p.amount||0),0);
-    const userStats=userStatsC17;
-    if(state.tab!=='dashboard') return;
-
-    const unitsProgress = stats.units > 0 
-      ? Math.round(stats.completedUnits / stats.units * 100) 
-      : 0;
-    
-    c.innerHTML = `
-      <div class="kpi-grid">
-        <div class="kpi-card">
-          <div class="num nums">${fmtNum(stats.activeWorkers)}</div>
-          <div class="lbl">مشتغلون نشطون</div>
-          <div class="progress-track" style="margin-top:12px;">
-            <span style="width:${stats.workers > 0 ? (stats.activeWorkers/stats.workers*100) : 0}%"></span>
-          </div>
-          <div class="subtle" style="margin-top:6px;">
-            من ${fmtNum(stats.workers)} إجمالي
-          </div>
-        </div>
-        
-        <div class="kpi-card teal">
-          <div class="num nums">${fmtNum(stats.activeProjects)}</div>
-          <div class="lbl">مشروعات نشطة</div>
-          <div class="progress-track" style="margin-top:12px;">
-            <span style="width:${stats.projects > 0 ? (stats.activeProjects/stats.projects*100) : 0}%"></span>
-          </div>
-          <div class="subtle" style="margin-top:6px;">
-            من ${fmtNum(stats.projects)} مشروع
-          </div>
-        </div>
-        
-        <div class="kpi-card amber">
-          <div class="num nums">${fmtNum(stats.activeAssignments)}</div>
-          <div class="lbl">تسكينات نشطة</div>
-          <div class="progress-track" style="margin-top:12px;">
-            <span style="width:${stats.assignments > 0 ? (stats.activeAssignments/stats.assignments*100) : 0}%"></span>
-          </div>
-          <div class="subtle" style="margin-top:6px;">
-            من ${fmtNum(stats.assignments)} إجمالي
-          </div>
-        </div>
-        
-        <div class="kpi-card success">
-          <div class="num nums">${unitsProgress}%</div>
-          <div class="lbl">إنجاز الوحدات</div>
-          <div class="progress-track" style="margin-top:12px;">
-            <span style="width:${unitsProgress}%"></span>
-          </div>
-          <div class="subtle" style="margin-top:6px;">
-            ${fmtNum(stats.completedUnits)} من ${fmtNum(stats.units)}
-          </div>
-        </div>
-      </div>
-      
-      <div class="card">
-        <div class="flex-between" style="margin-bottom:16px;">
-          <div>
-            <h3 style="margin:0;">👋 مرحباً ${esc(profile.full_name || '')}</h3>
-            <p class="subtle" style="margin:6px 0 0;">
-              دورك الحالي: <strong>${roleIcon(role)} ${roleAr(role)}</strong>
-            </p>
-          </div>
-        </div>
-        
-        <div class="action-grid">
-          ${['admin','region','followup'].includes(role) ? `
-            <div class="action-card" onclick="goToProjects()">
-              <div class="icon">📁</div>
-              <div class="title">المشروعات</div>
-              <div class="desc">إدارة المشاريع</div>
-            </div>
-          ` : ''}
-          
-          ${['admin','region','followup','office','committee'].includes(role) ? `
-            <div class="action-card" onclick="goToWorkers()">
-              <div class="icon">👥</div>
-              <div class="title">المشتغلون</div>
-              <div class="desc">إدارة الأفراد</div>
-            </div>
-          ` : ''}
-          
-          ${['admin','region','followup','office','project_manager'].includes(role) ? `
-            <div class="action-card" onclick="goToAssignments()">
-              <div class="icon">🔗</div>
-              <div class="title">التسكينات</div>
-              <div class="desc">إدارة التسكينات</div>
-            </div>
-          ` : ''}
-          
-          ${['admin','region','followup'].includes(role) ? `
-            <div class="action-card" onclick="goToRequests()">
-              <div class="icon">📋</div>
-              <div class="title">مركز الطلبات</div>
-              <div class="desc">مراجعة الطلبات</div>
-              ${(pendingCounts.pending_seating + pendingCounts.pending_structure + pendingCounts.pending_edit_requests) > 0 ? `
-                <span class="badge-count">
-                  ${pendingCounts.pending_seating + pendingCounts.pending_structure + pendingCounts.pending_edit_requests}
-                </span>
-              ` : ''}
-            </div>
-          ` : ''}
-        </div>
-      </div>
-      
-      ${userStats ? `
-        <div class="card">
-          <h3>📊 إحصائيات المستخدمين</h3>
-          <div class="stat-row">
-            <div class="stat-chip">
-              <div class="num nums">${userStats.total || 0}</div>
-              <div class="lbl">الإجمالي</div>
-            </div>
-            <div class="stat-chip">
-              <div class="num nums" style="color:var(--success);">${userStats.active || 0}</div>
-              <div class="lbl">نشط</div>
-            </div>
-            <div class="stat-chip">
-              <div class="num nums" style="color:var(--danger);">${userStats.inactive || 0}</div>
-              <div class="lbl">معطَّل</div>
-            </div>
-            <div class="stat-chip">
-              <div class="num nums" style="color:var(--navy);">${userStats.admins || 0}</div>
-              <div class="lbl">مشرف عام</div>
-            </div>
-            <div class="stat-chip">
-              <div class="num nums" style="color:var(--teal);">${userStats.project_managers || 0}</div>
-              <div class="lbl">مسؤول مشروع</div>
-            </div>
-            <div class="stat-chip">
-              <div class="num nums" style="color:var(--amber-dark);">${userStats.regions || 0}</div>
-              <div class="lbl">مشرف إقليم</div>
-            </div>
-          </div>
-        </div>
-      ` : ''}
-      
-      ${(pendingCounts.pending_seating || pendingCounts.pending_structure || pendingCounts.pending_edit_requests) > 0 ? `
-        <div class="card" style="border-color:var(--amber);background:#FFFBF0;">
-          <h3>⏳ لديك إجراءات معلقة</h3>
-          <div class="grid cols-3">
-            ${pendingCounts.pending_seating ? `
-              <div class="kpi-card amber" style="cursor:pointer;" onclick="${role === 'admin' ? 'goToRequests()' : 'goToSeatingRequests()'}">
-                <div class="num nums">${pendingCounts.pending_seating}</div>
-                <div class="lbl">طلبات تسكين</div>
-              </div>
-            ` : ''}
-            ${pendingCounts.pending_structure ? `
-              <div class="kpi-card amber" style="cursor:pointer;" onclick="goToRequests()">
-                <div class="num nums">${pendingCounts.pending_structure}</div>
-                <div class="lbl">طلبات تعديل هيكل</div>
-              </div>
-            ` : ''}
-            ${pendingCounts.pending_edit_requests ? `
-              <div class="kpi-card amber" style="cursor:pointer;" onclick="goToRequests()">
-                <div class="num nums">${pendingCounts.pending_edit_requests}</div>
-                <div class="lbl">طلبات تعديل بيانات</div>
-              </div>
-            ` : ''}
-          </div>
-        </div>
-      ` : ''}
-      
-      <div class="card">
-        <div class="flex-between">
-          <div>
-            <strong style="font-family:'Cairo',sans-serif;font-size:14px;">
-              💰 إجمالي المدفوعات
-            </strong>
-            <p class="subtle" style="margin:4px 0 0;">على مستوى كل المشاريع</p>
-          </div>
-          <div class="num nums" style="font-size:28px;font-weight:800;color:var(--success);">
-            ${fmtNum(stats.totalPaid)} <span style="font-size:14px;">ج.م</span>
-          </div>
-        </div>
-      </div>
-    `;
-  } catch(err) {
-    showError('content', err.message);
-  }
-}
-
-/* ============ Governorates ============ */
-async function renderGovernorates(){
-  const c = document.getElementById('content');
-  showLoading('content', 'جارِ تحميل المحافظات...');
-  
-  try {
-    const govs = visibleGovs();
-    if(govs.length === 0){
-      c.innerHTML = `
-        <div class="empty-rich">
-          <div class="icon">🏛️</div>
-          <h3>لا توجد محافظات متاحة</h3>
-          <p>تواصل مع المشرف العام لتعيين المحافظات المسموحة لك.</p>
-        </div>
-      `;
-      return;
-    }
-    
-    // جلب الإحصائيات
-    const govIds = govs.map(g => g.id);
-    
-    const [{ data: inds }, { data: pg }] = await Promise.all([
-      sb.from('individuals').select('governorate_id, status').in('governorate_id', govIds),
-      sb.from('project_governorates').select('governorate_id').in('governorate_id', govIds)
-    ]);
-    
-    const indCount = {};
-    (inds || []).forEach(r => {
-      if(['active','approved','assigned'].includes(r.status)){
-        indCount[r.governorate_id] = (indCount[r.governorate_id] || 0) + 1;
-      }
-    });
-    
-    const projCount = {};
-    (pg || []).forEach(r => {
-      projCount[r.governorate_id] = (projCount[r.governorate_id] || 0) + 1;
-    });
-    
-    c.innerHTML = `
-      <p class="section-hint">اختر محافظة للدخول إلى قوائم المرشحين والمشروعات.</p>
-      
-      <div class="grid cols-4">
-        ${govs.map(g => `
-          <div class="card" style="cursor:pointer;" onclick="openGovernorate(${g.id})">
-            <div class="flex-between" style="margin-bottom:10px;">
-              <h3 style="margin:0;font-size:15px;">${esc(g.name)}</h3>
-              <span class="badge badge-teal nums">${esc(g.code)}</span>
-            </div>
-            <div class="subtle">
-              <span class="nums" style="color:var(--navy);font-weight:800;">
-                ${projCount[g.id] || 0}
-              </span> مشروع · 
-              <span class="nums" style="color:var(--teal);font-weight:800;">
-                ${indCount[g.id] || 0}
-              </span> مشتغل
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `;
-  } catch(err) {
-    showError('content', err.message);
-  }
-}
-
-async function renderGovernorateDetail(){
-  const gov = govList.find(g => g.id === state.activeGovId);
-  if(!gov) return goToGovernorates();
-  
-  setBreadcrumb([
-    {label:'المحافظات', action:'goToGovernorates()'},
-    {label:gov.name}
-  ]);
-  
-  const c = document.getElementById('content');
-  showLoading('content', 'جارِ التحميل...');
-  
-  if(!state.govTab) state.govTab = 'workers';
-  
-  try {
-    // إحصائيات
-    const [{ count: indCount }, { data: projGovs }] = await Promise.all([
-      sb.from('individuals').select('id', {count:'exact', head:true}).eq('governorate_id', gov.id),
-      sb.from('project_governorates')
-        .select('project_id, projects(id, name, code, status, start_date, end_date)')
-        .eq('governorate_id', gov.id)
-    ]);
-    
-    const projects = (projGovs || []).map(pg => pg.projects).filter(Boolean);
-    
-    c.innerHTML = `
-      <div class="card">
-        <div class="flex-between" style="margin-bottom:8px;">
-          <h2 style="margin:0;font-size:22px;">
-            ${esc(gov.name)}
-            <span class="badge badge-teal nums">${esc(gov.code)}</span>
-          </h2>
-          <div class="subtle nums">
-            ${indCount || 0} مشتغل · ${projects.length} مشروع
-          </div>
-        </div>
-      </div>
-      
-      <div class="subtabs">
-        <button class="subtab ${state.govTab === 'workers' ? 'active' : ''}" 
-                onclick="state.govTab='workers'; renderGovernorateDetail();">
-          👥 المشتغلون / المرشحون
-        </button>
-        <button class="subtab ${state.govTab === 'projects' ? 'active' : ''}" 
-                onclick="state.govTab='projects'; renderGovernorateDetail();">
-          📁 المشاريع (${projects.length})
-        </button>
-      </div>
-      
-      <div id="govTabBody"></div>
-    `;
-    
-    if(state.govTab === 'workers'){
-      await renderGovWorkersTab(gov);
-    } else {
-      renderGovProjectsTab(gov, projects);
-    }
-  } catch(err) {
-    showError('content', err.message);
-  }
-}
-
 async function renderGovWorkersTab(gov){
   if(!canViewWorkers()) return showError('govTabBody', 'غير مصرح لك بعرض المشتغلين');
   const body = document.getElementById('govTabBody');
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
   
   try {
-    const { data: workers, error } = await sb.from('v_workers_registry')
-      .select('*')
-      .eq('governorate_id', gov.id)
-      .order('created_at', {ascending: false});
+    const { data: workers, error } = await fetchAllPagedV11((o)=>sb.from('v_workers_registry').select('*',o).eq('governorate_id', gov.id).order('created_at',{ascending:false}).order('id'));
     
     if(error) throw error;
     
@@ -3935,12 +3866,12 @@ function renderGovProjectsTab(gov, projects){
               <div class="lbl">عرض التسكين</div>
             </div>
             
-            <div class="section-box" onclick="event.stopPropagation(); openProject('${p.id}', 'finance');">
+            ${!c1202Restricted()?`<div class="section-box" onclick="event.stopPropagation(); openProject('${p.id}', 'finance');">
               <div class="icon">💰</div>
               <div class="title">التفاصيل المالية</div>
               <div class="stat nums">—</div>
               <div class="lbl">عرض المالي</div>
-            </div>
+            </div>`:''}
             
             <div class="section-box" onclick="event.stopPropagation(); openProject('${p.id}', 'performance');">
               <div class="icon">✅</div>
@@ -3955,7 +3886,6 @@ function renderGovProjectsTab(gov, projects){
   `;
 }
 
-/* ============ Workers List ============ */
 let _workersAllCache = [];
 let _workersProjectsCache = [];
 
@@ -3966,9 +3896,7 @@ async function renderWorkers(){
   showLoading('content', 'جارِ تحميل المشتغلين...');
 
   try {
-    const { data: workers, error } = await sb.from('v_workers_registry')
-      .select('*')
-      .order('created_at', {ascending:false});
+    const { data: workers, error } = await fetchAllPagedV11((o)=>sb.from('v_workers_registry').select('*',o).order('created_at',{ascending:false}).order('id'));
 
     if(error) throw error;
 
@@ -4112,7 +4040,8 @@ async function renderWorkers(){
 
 function renderWorkersResultsArea(){
   const area = document.getElementById('workersResultsArea');
-  if(!area) return; // المستخدم غادر الشاشة قبل انتهاء المؤقّت
+  if(!area) return; 
+
   const all = _workersAllCache;
 
   let filtered = all;
@@ -4229,7 +4158,7 @@ function setWorkerSearch(s){
   state.workerSearch = s;
   state.workerPage = 1;
   clearTimeout(window._wst);
-  // تحديث خفيف من البيانات المخزّنة محليًا فقط — مفيش إعادة بناء لمربع البحث نفسه إطلاقًا
+
   window._wst = setTimeout(() => renderWorkersResultsArea(), 200);
 }
 function setWorkerGov(g){ state.workerGovFilter = g; state.workerPage = 1; renderWorkersResultsArea(); }
@@ -4237,7 +4166,6 @@ function setWorkerProject(p){ state.workerProjectFilter = p; state.workerPage = 
 function setWorkerType(t){ state.workerTypeFilter = t; state.workerPage = 1; renderWorkersResultsArea(); }
 function setWorkerPage(p){ state.workerPage = p; renderWorkersResultsArea(); }
 
-/* ============ Worker Detail ============ */
 async function renderWorkerDetail(){
   if(!canViewWorkers()) return showError('content', 'غير مصرح لك بعرض بيانات المشتغل');
   setBreadcrumb([
@@ -4262,16 +4190,14 @@ async function renderWorkerDetail(){
       {label:'المشتغلون', action:'goToWorkers()'},
       {label:w.full_name}
     ]);
-    
-    // جلب التسكينات فقط لمن لديه صلاحية عرضها
+
     let assignments = [];
     if(canViewWorkerAssignments()){
       assignments = await callRPC('get_worker_assignments', {
         p_individual_id: w.id
       }).catch(() => []);
     }
-    
-    // جلب المدفوعات فقط لمن لديه صلاحية مالية
+
     let payments = [];
     if(canViewWorkerFinance()){
       const { data: paymentRows, error: paymentsError } = await sb.from('payments')
@@ -4473,8 +4399,6 @@ async function renderWorkerDetail(){
   }
 }
 
-
-/* ============ Committee interview request ============ */
 async function openWorkerInterviewRequest(workerId){
   if(!canManageWorkerInterview()) return showToast('هذه الصلاحية مخصصة للجنة المقابلة', 'danger');
   const { data: w, error } = await sb.from('v_workers_registry')
@@ -4529,7 +4453,6 @@ async function submitWorkerInterviewRequest(workerId){
   }
 }
 
-/* ============ Admin Hub ============ */
 async function renderAdmin(){
   if(profile.role !== 'admin') return showError('content', 'متاح للمشرف العام فقط');
   setBreadcrumb([{label:'الإدارة'}]);
@@ -4599,7 +4522,6 @@ async function renderAdmin(){
   `;
 }
 
-/* ============ Admin Users ============ */
 async function renderAdminUsers(){
   if(profile.role !== 'admin') return showToast('متاح للمشرف العام فقط', 'danger');
   
@@ -4781,7 +4703,6 @@ function applyUserRegionSelection(regionId){
   }
 }
 
-/* ---- Create/Edit User ---- */
 function openCreateUserModal(){ openUserFormModal(null); }
 function openEditUserModal(userId){ openUserFormModal(userId); }
 
@@ -5124,7 +5045,6 @@ async function submitResetPassword(userId){
   }
 }
 
-/* ============ Admin Targets ============ */
 async function renderAdminTargets(){
   if(profile.role !== 'admin') return showToast('متاح للمشرف العام فقط', 'danger');
   
@@ -5139,8 +5059,7 @@ async function renderAdminTargets(){
   try {
     const { data: govs, error } = await sb.from('governorates').select('*').order('code');
     if(error) throw error;
-    
-    // جلب عدد المتقدمين لكل محافظة
+
     const { data: inds } = await sb.from('individuals').select('governorate_id');
     const counts = {};
     (inds || []).forEach(i => {
@@ -5216,6 +5135,7 @@ async function saveTarget(id){
 }
 
 function exportTargetsExcel(){
+  if(c1202Restricted())return c1202Deny('تصدير غير مصرح به');
   sb.from('governorates').select('*').order('code').then(({data}) => {
     const rows = (data||[]).map(g => ({
       'الكود': g.code,
@@ -5226,7 +5146,6 @@ function exportTargetsExcel(){
   });
 }
 
-/* ============ Utility Actions ============ */
 function openAddIndividualModal(){
   if(!canCreateWorker()) return showToast('غير مصرح لك بإضافة مشتغلين', 'danger');
   const isOffice = profile.role === 'office';
@@ -5486,14 +5405,6 @@ async function submitAddIndividual(){
   }
 }
 
-
-
-/* ============================================================
- * platform-v10.js — Screens Part 2
- * Assignments + Units + Performance + Training + Seating + Payments
- * ============================================================ */
-
-/* ============ Assignments (التسكينات) ============ */
 async function renderAssignments(){
   const c = document.getElementById('content');
   showLoading('content', 'جارِ تحميل التسكينات...');
@@ -5638,7 +5549,6 @@ async function renderAssignments(){
     showError('content', err.message);
   }
 }
-
 
 async function loadAvailableWorkersForPeriod(governorateId, startDate, endDate){
   if(!startDate) return [];
@@ -6111,6 +6021,7 @@ async function submitOverrideConflict(){
     if(draft.successMode==='route'){
       route();
     }else if(draft.successMode==='structure'){
+      c12024InvalidateStructure(state.activeProjectId);
       renderProjectStructureTab(
         state.activeProjectCache,
         state.activeProjectCache?.govIds||[]
@@ -6285,7 +6196,6 @@ async function viewAssignmentDetails(assignmentId){
   }
 }
 
-/* ============ Work Units (وحدات العمل) ============ */
 async function renderUnits(){
   setBreadcrumb([{label:'وحدات العمل'}]);
   const c = document.getElementById('content');
@@ -6656,7 +6566,8 @@ function openImportUnitsModal(){
   showModal('importUnitsModal', modalHtml);
 }
 
-function downloadUnitsTemplate(){
+function downloadUnitsTemplate__impl(){
+  if(c1202Restricted())return c1202Deny('تصدير غير مصرح به');
   if(typeof XLSX === 'undefined') return showToast('مكتبة Excel لم تُحمّل', 'danger');
   const template = [
     { unit_code: 'FAM-001', unit_type: 'family', metadata: '{"head_name":"أحمد"}' },
@@ -6669,8 +6580,10 @@ function downloadUnitsTemplate(){
   XLSX.writeFile(wb, 'نموذج_وحدات_العمل.xlsx');
   showToast('✅ تم تحميل النموذج', 'success');
 }
+function downloadUnitsTemplate(...a){return ensureXLSXV11().then(()=>downloadUnitsTemplate__impl(...a)).catch(e=>console.error(e));}
 
 async function handleUnitsFile(file){
+  await ensureXLSXV11();
   if(!file) return;
   if(!file.name.match(/\.(xlsx|xls)$/i)){
     return showToast('صيغة الملف غير مدعومة', 'danger');
@@ -6720,7 +6633,6 @@ async function handleUnitsFile(file){
   reader.readAsArrayBuffer(file);
 }
 
-/* ============ Performance (الإنجاز اليومي) ============ */
 async function renderPerformance(){
   setBreadcrumb([{label:'الإنجاز اليومي'}]);
   const c = document.getElementById('content');
@@ -6884,7 +6796,6 @@ async function submitReviewProgress(progressId, decision){
   }
 }
 
-/* ============ Training ============ */
 async function renderTraining(){
   setBreadcrumb([{label:'التدريب'}]);
   const c = document.getElementById('content');
@@ -6905,8 +6816,7 @@ async function renderTraining(){
       absent: (attendance||[]).filter(a => a.status === 'absent').length,
       totalDeductions: (attendance||[]).reduce((s, a) => s + parseFloat(a.deduction_amount || 0), 0)
     };
-    
-    // جلب الأفراد المسكَّنين في المشروع
+
     const { data: assignedIndividuals } = await sb.from('assignments')
       .select('individual_id, individuals(id, full_name, national_id)')
       .eq('project_id', state.activeProjectId)
@@ -7093,103 +7003,6 @@ async function submitAttendance(){
   renderTraining();
 }
 
-/* ============ Seating Requests ============ */
-async function renderSeatingRequests(){
-  setBreadcrumb([{label:'طلبات التسكين'}]);
-  const c = document.getElementById('content');
-  showLoading('content', 'جارِ تحميل الطلبات...');
-  
-  try {
-    const { data: reqs, error } = await sb.from('seating_requests')
-      .select(`
-        *,
-        structure_slots(code, role, governorate_id, projects(name)),
-        individuals:individual_id(full_name, national_id),
-        profiles:requested_by(full_name)
-      `)
-      .eq('status', 'pending')
-      .order('requested_at', {ascending: false});
-    
-    if(error) throw error;
-    
-    const canApprove = ['region','admin'].includes(profile.role);
-    
-    c.innerHTML = `
-      <div class="card">
-        <div class="flex-between" style="margin-bottom:16px;">
-          <div>
-            <h3 style="margin:0;">✋ طلبات التسكين</h3>
-            <p class="subtle" style="margin:4px 0 0;">
-              ${(reqs||[]).length} طلب معلّق
-            </p>
-          </div>
-          <button class="btn btn-outline" onclick="renderSeatingRequests()">🔄 تحديث</button>
-        </div>
-      </div>
-      
-      <div class="card" style="padding:0;overflow:hidden;">
-        ${(!reqs || reqs.length === 0) ? `
-          <div class="empty-rich">
-            <div class="icon">✅</div>
-            <h3>لا توجد طلبات معلقة</h3>
-            <p>كل الطلبات تمت مراجعتها.</p>
-          </div>
-        ` : `
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>المشروع</th>
-                  <th>الكود</th>
-                  <th>الدور</th>
-                  <th>الفرد المقترح</th>
-                  <th>من</th>
-                  <th>التاريخ</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${reqs.map(r => `
-                  <tr>
-                    <td>
-                      <strong>${esc(r.structure_slots?.projects?.name || '—')}</strong>
-                    </td>
-                    <td class="nums">${esc(r.structure_slots?.code || '—')}</td>
-                    <td>${slotRoleAr(r.structure_slots?.role)}</td>
-                    <td>
-                      ${r.individuals 
-                        ? `${esc(r.individuals.full_name)}<br><span class="subtle nums">${esc(r.individuals.national_id)}</span>`
-                        : '<span class="badge badge-amber">إلغاء تسكين</span>'}
-                    </td>
-                    <td class="subtle">${esc(r.profiles?.full_name || '—')}</td>
-                    <td class="nums subtle">${fmtDateTime(r.requested_at)}</td>
-                    <td>
-                      ${canApprove ? `
-                        <div style="display:flex;gap:6px;">
-                          <button class="link-btn" 
-                                  onclick="approveSeatingReq('${r.id}')">
-                            اعتماد
-                          </button>
-                          <button class="link-btn danger" 
-                                  onclick="rejectSeatingReq('${r.id}')">
-                            رفض
-                          </button>
-                        </div>
-                      ` : '<span class="subtle">بانتظار المراجعة</span>'}
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        `}
-      </div>
-    `;
-  } catch(err) {
-    showError('content', err.message);
-  }
-}
-
 async function approveSeatingReq(reqId){
   const note = prompt('ملاحظة (اختياري):') || null;
   try {
@@ -7223,8 +7036,8 @@ async function rejectSeatingReq(reqId){
   }
 }
 
-/* ============ Payments ============ */
 async function renderPayments(){
+  if(c1202Restricted())return showError('content','غير مصرح بعرض المدفوعات');
   setBreadcrumb([{label:'المكافآت والتصفية'}]);
   const c = document.getElementById('content');
   showLoading('content', 'جارِ تحميل المدفوعات...');
@@ -7441,6 +7254,7 @@ async function submitPayment(){
 }
 
 function exportPaymentsExcel(){
+  if(c1202Restricted())return c1202Deny('تصدير غير مصرح به');
   sb.from('payments')
     .select('*, individuals(full_name), projects(name)')
     .eq('project_id', state.activeProjectId)
@@ -7459,13 +7273,6 @@ function exportPaymentsExcel(){
     });
 }
 
-/* ============================================================
- * platform-v10.js — Screens Part 3 (Final)
- * Projects + Wizard + Project Detail + Requests + Audit + Import
- * ============================================================ */
-
-/* ============ Projects List ============ */
-// C1.5: display filtering only; database access rules remain authoritative.
 function activeProjectsOnlyC15(){ return ['followup','region','office'].includes(profile?.role); }
 function projectQueryC15(query){ return activeProjectsOnlyC15() ? query.eq('status','active') : query; }
 function visibleProjectsC15(rows){ return (rows||[]).filter(p=>!activeProjectsOnlyC15() || p.status==='active'); }
@@ -7528,6 +7335,15 @@ async function loadProjectsDashboardLegacy(){
 }
 
 async function loadProjectsDashboard(){
+  if(c1202Restricted()) {
+
+    const scoped=await c12023ReadRpc('c120_dashboard',{});
+    const ids=(scoped?.projects||[]).map(x=>x.id).filter(Boolean);
+    if(!ids.length)return [];
+    const {data,error}=await sb.from('projects').select('id,name,code,start_date,end_date,status,project_mode,created_at').in('id',ids);
+    if(error)throw error;
+    return (data||[]).map(p=>({...p,slots:null,filled:null,assignments:null,units:null,completedUnits:null,completionPct:null}));
+  }
   try {
     const data = await callRPC('get_projects_dashboard_v11');
     if(!Array.isArray(data)) throw new Error('RPC returned an unexpected result');
@@ -7542,24 +7358,27 @@ async function loadProjectsDashboard(){
 }
 
 async function renderProjects(useCached=false){
+  const navEpoch=state.c12023NavEpoch;
   setBreadcrumb([{label:'المشروعات'}]);
   const c = document.getElementById('content');
-  showLoading('content', 'جارِ تحميل المشروعات...');
+  if(!projectListC15.rows || projectListC15.owner!==String(profile?.id||'')+':'+String(profile?.role||''))
+    c.innerHTML='<div class="card"><h3>المشروعات</h3><p class="subtle">جار تحميل قائمة المشروعات المصرح بها…</p></div>';
 
   try {
     const owner=String(profile?.id||'')+':'+String(profile?.role||'');
-    if(!useCached || !projectListC15.rows || projectListC15.owner!==owner){
+    if(!projectListC15.rows || projectListC15.owner!==owner || Date.now()-(projectListC15.fetchedAt||0)>60000){
       projectListC15.rows=await loadProjectsDashboard();
-      projectListC15.owner=owner;
+      projectListC15.owner=owner;projectListC15.fetchedAt=Date.now();
     }
-    if(activeProjectsOnlyC15()) projectListC15.status='active';
-    const all=visibleProjectsC15(projectListC15.rows);
+    if(navEpoch!==state.c12023NavEpoch || state.tab!=='projects')return;
+
+    projectListC15.status='active';
+    const all=visibleProjectsC15(projectListC15.rows).filter(p=>p.status==='active');
     const matched=selectProjectsC15(all,projectListC15);
     const pages=Math.max(1,Math.ceil(matched.length/12));
     projectListC15.page=Math.max(1,Math.min(projectListC15.page,pages));
     const projects=matched.slice((projectListC15.page-1)*12,projectListC15.page*12);
     const labels={active:'نشطة',draft:'مسودات',finished:'منتهية'};
-
 
     c.innerHTML = `
       <div class="flex-between" style="margin-bottom:18px;">
@@ -7576,7 +7395,7 @@ async function renderProjects(useCached=false){
 
       <div class="card" style="padding:16px;margin-bottom:18px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-          ${(activeProjectsOnlyC15()?['active']:['active','draft','finished','all']).map(key=>`
+          ${['active'].map(key=>`
             <button class="btn ${projectListC15.status===key?'btn-primary':'btn-outline'}" aria-pressed="${projectListC15.status===key}" onclick="changeProjectsC15('${key}')">
               ${labels[key]||'الكل'} (${key==='all'?all.length:all.filter(p=>p.status===key).length})
             </button>`).join('')}
@@ -7602,12 +7421,12 @@ async function renderProjects(useCached=false){
           <p>${canCreateProject() ? 'اضغط "مشروع جديد" للبدء.' : 'لا توجد مشروعات نشطة متاحة لحسابك ضمن هذا البحث.'}</p>
         </div>
       ` : projects.map(p => {
-        const slots = Number(p.slots || 0);
-        const filled = Number(p.filled || 0);
+        const slots = p.slots==null?null:Number(p.slots);
+        const filled = p.filled==null?null:Number(p.filled);
         const managers = Array.isArray(p.managers) ? p.managers : [];
-        const assignments = Number(p.assignments || 0);
+        const assignments = p.assignments==null?null:Number(p.assignments);
         const totalPaid = Number(p.totalPaid ?? p.total_paid ?? 0);
-        const completionPct = Number(p.completionPct ?? p.completion_pct ?? 0);
+        const completionPct = (p.completionPct??p.completion_pct)==null?null:Number(p.completionPct??p.completion_pct);
 
         return `
           <div class="project-box clickable" onclick="openProject('${p.id}')">
@@ -7639,28 +7458,28 @@ async function renderProjects(useCached=false){
               <div class="section-box" onclick="event.stopPropagation(); openProject('${p.id}', 'structure');">
                 <div class="icon">📋</div>
                 <div class="title">هيكل المشتغلين</div>
-                <div class="stat nums">${filled}/${slots}</div>
-                <div class="lbl">مُسكَّن / إجمالي</div>
+                <div class="stat nums">${slots==null?'عرض الهيكل':filled+'/'+slots}</div>
+                <div class="lbl">البيانات الكاملة داخل الهيكل</div>
               </div>
 
               <div class="section-box" onclick="event.stopPropagation(); openProject('${p.id}', 'assignments');">
                 <div class="icon">📊</div>
                 <div class="title">خطة الإسناد</div>
-                <div class="stat nums">${assignments}</div>
+                <div class="stat nums">${assignments==null?'عرض التسكينات':assignments}</div>
                 <div class="lbl">تسكين نشط</div>
               </div>
 
-              <div class="section-box" onclick="event.stopPropagation(); openProject('${p.id}', 'finance');">
+              ${['admin','project_manager'].includes(profile?.role) ? `<div class="section-box" onclick="event.stopPropagation(); openProject('${p.id}', 'finance');">
                 <div class="icon">💰</div>
                 <div class="title">التفاصيل المالية</div>
                 <div class="stat nums">${fmtNum(totalPaid)}</div>
                 <div class="lbl">ج.م مصروف</div>
-              </div>
+              </div>` : ''}
 
               <div class="section-box" onclick="event.stopPropagation(); openProject('${p.id}', 'performance');">
                 <div class="icon">✅</div>
                 <div class="title">إنجاز العمل</div>
-                <div class="stat nums">${completionPct}%</div>
+                <div class="stat nums">${completionPct==null?'عرض التنفيذ':completionPct+'%'}</div>
                 <div class="lbl">نسبة الإنجاز</div>
               </div>
             </div>
@@ -7673,8 +7492,6 @@ async function renderProjects(useCached=false){
   }
 }
 
-
-/* ============ Project Wizard ============ */
 function startProjectWizard(){
   wizard.step = 1;
   wizard.data = {
@@ -8073,7 +7890,7 @@ async function commitProject(){
   const code = 'PRJ-' + Date.now().toString(36).toUpperCase();
   
   try {
-    // 1) إنشاء المشروع
+
     const { data: proj, error: e1 } = await sb.from('projects').insert({
       code,
       name: d.name,
@@ -8086,8 +7903,7 @@ async function commitProject(){
     }).select().single();
     
     if(e1) throw new Error('تعذر إنشاء المشروع: ' + e1.message);
-    
-    // 2) ربط المحافظات
+
     const pgRows = d.govIds.map(gid => ({
       project_id: proj.id,
       governorate_id: gid,
@@ -8098,11 +7914,9 @@ async function commitProject(){
     
     const { error: e2 } = await sb.from('project_governorates').insert(pgRows);
     if(e2) throw new Error('تعذر ربط المحافظات: ' + e2.message);
-    
-    // 3) إعدادات المشروع
+
     await sb.from('project_settings').insert({ project_id: proj.id });
-    
-    // 4) مراحل المشروع
+
     const phases = [
       'workforce', 'structure', 'frame', 'seating', 'training',
       'fieldwork', 'payment', 'reconciliation', 'closure'
@@ -8114,8 +7928,7 @@ async function commitProject(){
         phase_status: 'pending'
       }))
     );
-    
-    // 5) تعيين مسؤولي المشروع فعلياً
+
     if(!d.managerIds.length){
       throw new Error('يجب تعيين مسؤول مشروع واحد على الأقل');
     }
@@ -8126,13 +7939,11 @@ async function commitProject(){
         p_profile_id: pid
       });
     }
-    
-    // 6) توليد الهيكل
+
     for(const gid of d.govIds){
       const plan = d.plan[gid];
       const gCode = govCode(gid);
-      
-      // المشرفون
+
       const sups = [];
       for(let s = 1; s <= plan.supervisors; s++){
         sups.push({
@@ -8146,8 +7957,7 @@ async function commitProject(){
       
       const { data: supData, error: eS } = await sb.from('structure_slots').insert(sups).select();
       if(eS){ console.warn('مشرفون:', eS.message); continue; }
-      
-      // المراجعون
+
       const revs = [];
       supData.forEach(sup => {
         for(let r = 1; r <= plan.reviewers; r++){
@@ -8167,8 +7977,7 @@ async function commitProject(){
         if(eR){ console.warn('مراجعون:', eR.message); continue; }
         revData = data;
       }
-      
-      // الباحثون
+
       const ress = [];
       revData.forEach(rev => {
         for(let a = 1; a <= plan.researchers; a++){
@@ -8201,9 +8010,12 @@ async function commitProject(){
   }
 }
 
-/* ============ Project Detail ============ */
 async function renderProjectDetail(){
   const c=document.getElementById('content');
+  const routeEpoch=state.c12023NavEpoch;
+  const projectAtStart=state.activeProjectId;
+  const tabAtStart=state.projectTab;
+  const isStale=()=>routeEpoch!==state.c12023NavEpoch||state.tab!=='project-detail'||state.activeProjectId!==projectAtStart||state.projectTab!==tabAtStart;
   if(!state.activeProjectCache){
     const {data,error}=await sb.from('projects').select('*').eq('id',state.activeProjectId).maybeSingle();
     if(error) return showError('content',error.message);
@@ -8211,6 +8023,20 @@ async function renderProjectDetail(){
   }
   const proj=state.activeProjectCache;
   if(!proj) return showError('content','المشروع غير موجود');
+
+  let scope23;
+  try {
+    scope23=await c12023ProjectScope(proj.id);
+    if(isStale())return;
+    if(scope23.permitted!==true) return showError('content','المشروع خارج نطاق صلاحيتك');
+    if(c1202Restricted()) {
+      const govs=scope23.govs;
+      state.c1202GovIds=new Set((govs||[]).map(g=>Number(g.id)));
+    }else state.c1202GovIds=null;
+  }catch(e){return showError('content',e.message||'تعذر التحقق من صلاحيات المشروع');}
+  if(state.projectTab==='finance'&&!c1202CanFinance()) state.projectTab='overview';
+  if(state.projectTab==='log'&&!c1202CanProjectLog()) state.projectTab='overview';
+  if(state.projectTab==='quality'&&c1202Restricted()) state.projectTab='overview';
   if(activeProjectsOnlyC15() && proj.status!=='active'){
     state.activeProjectCache=null;
     return showError('content','هذا المشروع غير نشط. تعرض صلاحية حسابك المشروعات النشطة فقط.');
@@ -8233,16 +8059,17 @@ async function renderProjectDetail(){
 
   try{
     const [slots,filled,pg,canManage,canOperate,cycles]=await Promise.all([
-      sb.from('structure_slots').select('id',{count:'exact',head:true}).eq('project_id',proj.id),
-      sb.from('structure_slots').select('id',{count:'exact',head:true}).eq('project_id',proj.id).eq('status','filled'),
-      sb.from('project_governorates').select('*').eq('project_id',proj.id),
-      callRPC('can_manage_project_finance_v11',{p_project_id:proj.id}),
-      callRPC('can_operate_project_v11',{p_project_id:proj.id}),
+      c1202Restricted()?Promise.resolve({count:0}):sb.from('structure_slots').select('id',{count:'exact',head:true}).eq('project_id',proj.id),
+      c1202Restricted()?Promise.resolve({count:0}):sb.from('structure_slots').select('id',{count:'exact',head:true}).eq('project_id',proj.id).eq('status','filled'),
+      c1202Restricted()?Promise.resolve({data:(scope23.govs||[]).map(g=>({governorate_id:Number(g.id)}))}):sb.from('project_governorates').select('*').eq('project_id',proj.id),
+      c1202Restricted()?Promise.resolve(false):callRPC('can_manage_project_finance_v11',{p_project_id:proj.id}),
+      c1202Restricted()?c12023Cached('project-operate',{pid:proj.id},()=>callRPC('can_operate_project_v11',{p_project_id:proj.id}),45000):callRPC('can_operate_project_v11',{p_project_id:proj.id}),
       proj.project_mode==='recurring'
         ? callRPC('get_project_cycles_v11',{p_project_id:proj.id})
         : Promise.resolve([])
     ]);
 
+    if(isStale())return;
     state.currentProjectCanManage=canManage===true;
     state.currentProjectCanOperate=canOperate===true;
     state.projectCycles=cycles||[];
@@ -8257,17 +8084,26 @@ async function renderProjectDetail(){
     }
 
     const currentCycle=state.projectCycles.find(x=>x.id===state.activeCycleId)||null;
-    const govIds=(pg.data||[]).map(x=>x.governorate_id);
-    const pct=slots.count?Math.round((filled.count||0)/(slots.count||1)*100):0;
-    const financeVisible=['admin','project_manager','region','followup'].includes(profile?.role);
+    const govIds=(pg.data||[]).map(x=>x.governorate_id).filter(id=>c1202AllowGov(id)).sort(c1202GovOrder);
+    state.activeProjectCache.govIds=govIds;
+    if(c1202Restricted()) {
+      const listCard=(projectListC15.owner===String(profile?.id||'')+':'+String(profile?.role||'')&&projectListC15.rows||[]).find(x=>x.id===proj.id);
+      state.c1202ProjectCard=listCard||null; 
+
+    }else state.c1202ProjectCard=null;
+    if(isStale())return;
+    const sCount=c1202Restricted()?Number(state.c1202ProjectCard?.slots||0):Number(slots.count||0);
+    const fCount=c1202Restricted()?Number(state.c1202ProjectCard?.filled||0):Number(filled.count||0);
+    const pct=sCount?Math.round(100*fCount/sCount):null;
+    const financeVisible=c1202CanFinance();
 
     const tabs=[
-      ['overview','📊','نظرة عامة'],['setup','⚙️','إعداد المشروع'],['cycles','🔄','الدورات والإطار'],
+      ['overview','📊','نظرة عامة'],['setup','⚙️','إعداد المشروع'],...(!c1202Restricted()?[['cycles','🔄','الدورات والإطار']]:[]),
       ['workforce','👥','خطة القوى البشرية'],['structure','🧩','الهيكل'],['assignments','🔗','التسكينات'],
       ['training','🎓','التدريب'],['operations','📦','الإسناد ووحدات العمل'],['execution','📈','أرصدة التنفيذ'],
-      ['quality','🛡️','الجودة والجزاءات'],
+      ...(!c1202Restricted()?[['quality','🛡️','الجودة والجزاءات']]:[]),
       ...(financeVisible?[['finance','💰','المالية والتسوية']]:[]),
-      ['reports','📑','التقارير'],['log','🕘','سجل المشروع']
+      ['reports','📑','التقارير'],...(c1202CanProjectLog()?[['log','🕘','سجل المشروع']]:[])
     ];
     if(!tabs.some(t=>t[0]===state.projectTab)) state.projectTab='overview';
 
@@ -8276,7 +8112,7 @@ async function renderProjectDetail(){
         <div class="flex-between" style="align-items:flex-start;">
           <div>
             <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;">
-              <div class="workspace-tag">Project Workspace · V11 RC1Q1</div>
+              <div class="workspace-tag">Project Workspace · C1.22.2</div>
 
               ${state.projectTab!=='overview'?`
                 <button class="btn btn-outline btn-sm"
@@ -8286,6 +8122,7 @@ async function renderProjectDetail(){
                 </button>
               `:''}
 
+              <button class="btn btn-outline btn-sm" onclick="c12023RefreshProject()" style="background:#fff;">🔄 تحديث البيانات</button>
               <button class="btn btn-outline btn-sm"
                       onclick="goToProjects()"
                       style="background:#fff;">
@@ -8306,7 +8143,7 @@ async function renderProjectDetail(){
             </div>
           </div>
           <div style="text-align:left;">
-            <div style="font-size:25px;font-weight:900;" class="nums">${pct}%</div>
+            <div id="c12026HeaderPct" style="font-size:25px;font-weight:900;" class="nums">${pct===null?'—':pct+'%'}</div>
             <div class="meta">اكتمال التسكين</div>
             ${currentCycle?`<div class="meta" style="margin-top:8px;">الدورة الحالية: <strong>${esc(currentCycle.cycle_code)}</strong></div>`:''}
           </div>
@@ -8317,7 +8154,19 @@ async function renderProjectDetail(){
       </div>
       <div id="projectBody"></div>`;
 
-    if(state.projectTab==='overview') await renderProjectOverviewV11(proj,pg.data||[]);
+    if(c1202Restricted()){
+      c12023Cached('full-structure',{project:proj.id},async()=>{
+        const {data,error}=await sb.rpc('c12024_structure',{p_project_id:proj.id});
+        if(error)throw new Error(error.message);
+        return data||[];
+      },35000).then(rows=>{
+        if(state.tab!=='project-detail'||state.activeProjectId!==proj.id)return;
+        const slots=(rows||[]).filter(r=>c1202AllowGov(r.governorate_id));
+        const el=document.getElementById('c12026HeaderPct');
+        if(el)el.textContent=slots.length?Math.round(100*slots.filter(s=>s.individual_id).length/slots.length)+'%':'—';
+      }).catch(e=>console.warn('[C12026] structure header:',e.message));
+    }
+    if(state.projectTab==='overview') await renderProjectOverviewV11(proj,(pg.data||[]).filter(g=>c1202AllowGov(g.governorate_id)));
     else if(state.projectTab==='setup') await renderProjectSetupV11(proj);
     else if(state.projectTab==='cycles') await renderProjectCyclesRC1E(proj);
     else if(state.projectTab==='workforce') await renderProjectWorkforceTab(proj);
@@ -8330,7 +8179,7 @@ async function renderProjectDetail(){
     else if(state.projectTab==='finance') await renderProjectFinanceV11Tab(proj);
     else if(state.projectTab==='reports') await renderProjectReportsV11Tab(proj);
     else if(state.projectTab==='log') await renderProjectLogV11Tab(proj);
-  }catch(err){ showError('content',err.message); }
+  }catch(err){if(!isStale())showError('content',err.message); }
 }
 
 function renderProjectOverviewTab(proj, pg){
@@ -8421,12 +8270,22 @@ async function renderProjectStructureTab(proj, govIds){
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
   
   try {
-    const { data: slots } = await sb.from('structure_slots')
-      .select('*, individuals(full_name, username, national_id, phone)')
-      .eq('project_id', proj.id)
-      .order('governorate_id, code');
-    
-    // تجميع الأكواد حسب المحافظة ثم المستوى
+
+    const slots = c1202Restricted()
+      ? await c12023Cached('full-structure',{project:proj.id},async()=>{
+          const {data,error}=await sb.rpc('c12024_structure',{p_project_id:proj.id});
+          if(error)throw new Error(error.message);
+          if(!Array.isArray(data))throw new Error('استجابة الهيكل غير متوقعة');
+          return data;
+        },35000)
+      : (await sb.from('structure_slots').select('*, individuals(full_name, username, national_id, phone)')
+         .eq('project_id',proj.id).order('governorate_id',{ascending:true}).order('code',{ascending:true})).data;
+    (slots||[]).sort(c1202SlotOrder);
+    if(c1202Restricted() && slots.length===0){
+      body.innerHTML='<div class="card"><h3>لا توجد خانات هيكل ظاهرة ضمن نطاق هذا المستخدم</h3><p class="subtle">إذا كانت توجد خانات فعلية، تحقّق من ربط محافظات المشروع بالمستخدم ومن صلاحية دالة c12024_structure. لن نعرض بيانات جزئية أو أصفارًا مضللة.</p></div>';
+      return;
+    }
+
     const byGov = {};
     (slots || []).forEach(s => {
       if(!byGov[s.governorate_id]) {
@@ -8435,15 +8294,14 @@ async function renderProjectStructureTab(proj, govIds){
       byGov[s.governorate_id][s.role + 's'] = byGov[s.governorate_id][s.role + 's'] || [];
       byGov[s.governorate_id][s.role + 's'].push(s);
     });
-    
-    // فحص الصلاحيات
+
     const canEdit = isCentral();
-    const canAssign = isGovernorate();
+    const canAssign = ['admin','region','office'].includes(profile?.role);
     
     body.innerHTML = `
       <div class="card">
         <div class="flex-between" style="margin-bottom:14px;">
-          <h3 style="margin:0;">📋 هيكل المشتغلين — ${(slots||[]).length} كود</h3>
+          <h3 style="margin:0;">🧩 الهيكل التنظيمي — ${(slots||[]).length} خانة · ${(slots||[]).filter(x=>x.individual_id).length} مسكّن · ${(slots||[]).filter(x=>!x.individual_id).length} شاغر</h3>
           <div style="display:flex;gap:8px;">
             ${canEdit ? `
               <button class="btn btn-amber btn-sm" onclick="openAddStructureSlotModal('${proj.id}')">
@@ -8471,7 +8329,7 @@ async function renderProjectStructureTab(proj, govIds){
                 <span class="subtle nums">(${esc(govCode(gid))})</span>
               </h3>
               <span class="badge ${pct === 100 ? 'badge-success' : pct > 0 ? 'badge-teal' : 'badge-amber'}">
-                ${filledSlots}/${totalSlots} · ${pct}%
+                ${filledSlots} مسكّن · ${totalSlots-filledSlots} شاغر · ${totalSlots} إجمالي · ${pct}%
               </span>
             </div>
             
@@ -8599,7 +8457,6 @@ async function renderProjectStructureTab(proj, govIds){
   }
 }
 
-/* ============ Shجرة الهيكل — إضافة كود ============ */
 async function openAddStructureSlotModal(projectId, preselectGovId = null){
   if(!isCentral()) return showToast('متاح لمنسق المشروع فقط', 'danger');
   
@@ -8670,8 +8527,7 @@ async function submitAddStructureSlot(projectId){
   const parentId = document.getElementById('slt_parent').value || null;
   
   if(!govId) return showToast('اختر المحافظة', 'danger');
-  
-  // توليد كود تلقائي
+
   let code = codeInput;
   if(!code){
     const { data: existing } = await sb.from('structure_slots')
@@ -8751,10 +8607,9 @@ async function openAssignToSlotModal(slotId){
     return showToast('غير مصرح لك بالتسكين','danger');
   }
 
-  const {data:slot}=await sb.from('structure_slots')
-    .select('*').eq('id',slotId).maybeSingle();
-
-  if(!slot) return showToast('الكود غير موجود','danger');
+  let slot;
+  try{slot=await c12024FindSlot(slotId);}catch(e){return showToast(e.message,'danger');}
+  if(!slot)return showToast('الكود غير موجود ضمن صلاحياتك','danger');
 
   const modalHtml=`
     <div class="modal-box">
@@ -8851,9 +8706,8 @@ async function submitAssignToSlot(slotId){
   }
 
   try{
-    const {data:slot,error:slotError}=await sb.from('structure_slots')
-      .select('*').eq('id',slotId).single();
-    if(slotError) throw slotError;
+    const slot=await c12024FindSlot(slotId);
+    if(!slot)throw new Error('الكود خارج صلاحياتك أو لم يعد متاحًا');
 
     const draft={
       individualId,
@@ -8903,6 +8757,7 @@ async function submitAssignToSlot(slotId){
         'success'
       );
 
+      c12024InvalidateStructure(state.activeProjectId);
       renderProjectStructureTab(
         state.activeProjectCache,
         state.activeProjectCache?.govIds||[]
@@ -9049,137 +8904,8 @@ async function removeManager(projectId, profileId){
   route();
 }
 
-/* ============ Requests Hub ============ */
-async function renderRequestsHub(){
-  if(!['admin','region'].includes(profile.role)) return showError('content', 'لا توجد لديك صلاحية لاعتماد الطلبات');
-  setBreadcrumb([{label:'مركز الطلبات'}]);
-  const c = document.getElementById('content');
-  
-  await refreshPendingCounts();
-  
-  try {
-    c.innerHTML = `
-      <p class="section-hint">مركز الطلبات والموافقات.</p>
-      
-      <div class="action-grid">
-        <div class="action-card" onclick="${profile.role === 'admin' ? "state.tab='requests'; renderAdminSeatingRequests();" : 'goToSeatingRequests()'}">
-          <div class="icon">✋</div>
-          <div class="title">طلبات التسكين</div>
-          <div class="desc">${pendingCounts.pending_seating || 0} طلب معلّق</div>
-          ${(pendingCounts.pending_seating || 0) > 0 ? `
-            <span class="badge-count">${pendingCounts.pending_seating}</span>
-          ` : ''}
-        </div>
-        
-        <div class="action-card" onclick="renderAdminStructureRequests()">
-          <div class="icon">🏗️</div>
-          <div class="title">تعديلات الهيكل</div>
-          <div class="desc">${pendingCounts.pending_structure || 0} طلب معلّق</div>
-          ${(pendingCounts.pending_structure || 0) > 0 ? `
-            <span class="badge-count">${pendingCounts.pending_structure}</span>
-          ` : ''}
-        </div>
-        
-        <div class="action-card" onclick="renderAdminEditRequests()">
-          <div class="icon">✏️</div>
-          <div class="title">تعديلات البيانات</div>
-          <div class="desc">${pendingCounts.pending_edit_requests || 0} طلب معلّق</div>
-          ${(pendingCounts.pending_edit_requests || 0) > 0 ? `
-            <span class="badge-count">${pendingCounts.pending_edit_requests}</span>
-          ` : ''}
-        </div>
-
-        <div class="action-card" onclick="renderAdminTransferRequests()">
-          <div class="icon">🔄</div>
-          <div class="title">طلبات نقل المحافظة</div>
-          <div class="desc">${pendingCounts.pending_transfers || 0} طلب معلّق</div>
-          ${(pendingCounts.pending_transfers || 0) > 0 ? `
-            <span class="badge-count">${pendingCounts.pending_transfers}</span>
-          ` : ''}
-        </div>
-      </div>
-    `;
-  } catch(err) {
-    showError('content', err.message);
-  }
-}
-
 async function renderAdminSeatingRequests(){
   await renderSeatingRequests();
-}
-
-async function renderAdminStructureRequests(){
-  const c = document.getElementById('content');
-  showLoading('content', 'جارِ التحميل...');
-  
-  try {
-    const { data: reqs, error } = await sb.from('structure_change_requests')
-      .select('*, projects(name), profiles:requested_by(full_name)')
-      .eq('status', 'pending')
-      .order('created_at', {ascending: false});
-    
-    if(error) throw error;
-    
-    const changeTypes = {
-      'add_supervisor': 'إضافة مشرف',
-      'add_reviewer': 'إضافة مراجع',
-      'add_researcher': 'إضافة باحث',
-      'update_code': 'تعديل كود',
-      'delete_slot': 'حذف كود'
-    };
-    
-    c.innerHTML = `
-      <h2 style="margin:0 0 6px 0;font-size:20px;">🏗️ طلبات تعديل الهيكل</h2>
-      <p class="section-hint">${(reqs||[]).length} طلب معلّق</p>
-      
-      ${(reqs || []).length === 0 ? `
-        <div class="empty-rich">
-          <div class="icon">✅</div>
-          <h3>لا توجد طلبات معلقة</h3>
-        </div>
-      ` : `
-        <div class="card" style="padding:0;overflow:hidden;">
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>المشروع</th>
-                  <th>النوع</th>
-                  <th>من</th>
-                  <th>التاريخ</th>
-                  <th>التفاصيل</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${reqs.map(r => `
-                  <tr>
-                    <td><strong>${esc(r.projects?.name || '—')}</strong></td>
-                    <td><span class="badge badge-teal">${changeTypes[r.change_type] || r.change_type}</span></td>
-                    <td class="subtle">${esc(r.profiles?.full_name || '—')}</td>
-                    <td class="nums subtle">${fmtDateTime(r.created_at)}</td>
-                    <td class="subtle" style="max-width:300px;">
-                      ${Object.entries(r.payload || {}).map(([k,v]) => `
-                        <div>${esc(k)}: <strong>${esc(v)}</strong></div>
-                      `).join('')}
-                    </td>
-                    <td>
-                      <div style="display:flex;gap:6px;">
-                        <button class="link-btn" onclick="approveStructureReq('${r.id}')">اعتماد</button>
-                        <button class="link-btn danger" onclick="rejectStructureReq('${r.id}')">رفض</button>
-                      </div>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `}
-    `;
-  } catch(err) {
-    showError('content', err.message);
-  }
 }
 
 async function approveStructureReq(reqId){
@@ -9212,142 +8938,6 @@ async function rejectStructureReq(reqId){
     renderAdminStructureRequests();
   } catch(err) {
     showToast(err.message, 'danger');
-  }
-}
-
-async function renderAdminEditRequests(){
-  if(profile.role !== 'admin') return showError('content', 'متاح للمشرف العام فقط');
-  const c = document.getElementById('content');
-  showLoading('content', 'جارِ التحميل...');
-  
-  try {
-    const { data: reqs, error } = await sb.from('individual_edit_requests')
-      .select('*, individuals(full_name, national_id), profiles:requested_by(full_name)')
-      .eq('status', 'pending')
-      .order('created_at', {ascending: false});
-    
-    if(error) throw error;
-    
-    c.innerHTML = `
-      <h2 style="margin:0 0 6px 0;font-size:20px;">✏️ طلبات تعديل البيانات</h2>
-      <p class="section-hint">${(reqs||[]).length} طلب معلّق</p>
-      
-      ${(reqs || []).length === 0 ? `
-        <div class="empty-rich">
-          <div class="icon">✅</div>
-          <h3>لا توجد طلبات معلقة</h3>
-        </div>
-      ` : `
-        <div class="card" style="padding:0;overflow:hidden;">
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>الفرد</th>
-                  <th>التعديلات</th>
-                  <th>من</th>
-                  <th>التاريخ</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${reqs.map(r => `
-                  <tr>
-                    <td>
-                      <strong>${esc(r.individuals?.full_name || '—')}</strong>
-                      <br>
-                      <span class="subtle nums">${esc(r.individuals?.national_id || '')}</span>
-                    </td>
-                    <td class="subtle" style="max-width:300px;">
-                      ${Object.entries(r.changes || {}).map(([k,v]) => `
-                        <div>${esc(k)}: <strong>${esc(v)}</strong></div>
-                      `).join('')}
-                    </td>
-                    <td class="subtle">${esc(r.profiles?.full_name || '—')}</td>
-                    <td class="nums subtle">${fmtDateTime(r.created_at)}</td>
-                    <td>
-                      <div style="display:flex;gap:6px;">
-                        <button class="link-btn" onclick="approveEditReq('${r.id}')">اعتماد</button>
-                        <button class="link-btn danger" onclick="rejectEditReq('${r.id}')">رفض</button>
-                      </div>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `}
-    `;
-  } catch(err) {
-    showError('content', err.message);
-  }
-}
-
-async function renderAdminTransferRequests(){
-  if(profile.role !== 'admin') return showError('content', 'متاح للمشرف العام فقط');
-  const c = document.getElementById('content');
-  showLoading('content', 'جارِ التحميل...');
-
-  try {
-    const { data: reqs, error } = await sb.from('individuals')
-      .select('id, full_name, national_id, governorate_id, requested_governorate_id, transfer_requested_at, profiles:transfer_requested_by(full_name)')
-      .not('requested_governorate_id', 'is', null)
-      .order('transfer_requested_at', {ascending: false});
-
-    if(error) throw error;
-
-    c.innerHTML = `
-      <h2 style="margin:0 0 6px 0;font-size:20px;">🔄 طلبات نقل المحافظة</h2>
-      <p class="section-hint">${(reqs||[]).length} طلب معلّق</p>
-
-      ${(reqs || []).length === 0 ? `
-        <div class="empty-rich">
-          <div class="icon">✅</div>
-          <h3>لا توجد طلبات معلقة</h3>
-        </div>
-      ` : `
-        <div class="card" style="padding:0;overflow:hidden;">
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>الفرد</th>
-                  <th>من</th>
-                  <th>إلى</th>
-                  <th>مقدَّم من</th>
-                  <th>التاريخ</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${reqs.map(r => `
-                  <tr>
-                    <td>
-                      <strong>${esc(r.full_name)}</strong>
-                      <br>
-                      <span class="subtle nums">${esc(r.national_id)}</span>
-                    </td>
-                    <td class="subtle">${esc(govList.find(g=>g.id===r.governorate_id)?.name || '—')}</td>
-                    <td><strong>${esc(govList.find(g=>g.id===r.requested_governorate_id)?.name || '—')}</strong></td>
-                    <td class="subtle">${esc(r.profiles?.full_name || '—')}</td>
-                    <td class="nums subtle">${fmtDateTime(r.transfer_requested_at)}</td>
-                    <td>
-                      <div style="display:flex;gap:6px;">
-                        <button class="link-btn" onclick="approveTransferInList('${r.id}')">قبول</button>
-                        <button class="link-btn danger" onclick="rejectTransferInList('${r.id}')">رفض</button>
-                      </div>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `}
-    `;
-  } catch(err) {
-    showError('content', err.message);
   }
 }
 
@@ -9410,7 +9000,6 @@ async function rejectEditReq(reqId){
   }
 }
 
-/* ============ Audit Log ============ */
 let _auditAllCache = [];
 
 async function renderAudit(){
@@ -9585,7 +9174,6 @@ async function exportAuditLog(){
   exportToExcel([{name: 'سجل الإجراءات', rows}], 'سجل_الإجراءات.xlsx');
 }
 
-/* ============ Bulk Import (Arabic headers, diff-preview — index19 style) ============ */
 const IMPORT_FIELD_MAP = [
   ['الاسم الرباعي','full_name','text'],
   ['النوع','gender','gender'],
@@ -9607,8 +9195,6 @@ const IMPORT_FIELD_MAP = [
   ['تمت المقابلة','interview_done','bool'],
 ];
 const IMPORT_FIELD_LABELS = Object.fromEntries(IMPORT_FIELD_MAP.map(([label,field])=>[field,label]));
-// ملحوظة تصميم: المحافظة مستبعدة من فروقات التحديث (تُغيَّر فقط عبر "طلب نقل").
-// "حالة المشتغل" عمود خاص منفصل يُحتسب فقط عندما يكون المستورِد أدمن.
 
 function normalizeAr(s){
   return String(s==null?'':s).trim().replace(/ى/g,'ي').replace(/أ|إ|آ/g,'ا').replace(/\s+/g,' ');
@@ -9683,7 +9269,7 @@ function openBulkImportModal(){
   showModal('bulkImportModal', modalHtml);
 }
 
-function downloadWorkersTemplate(){
+function downloadWorkersTemplate__impl(){
   if(typeof XLSX === 'undefined') return showToast('مكتبة Excel لم تُحمّل', 'danger');
 
   const sample = {'الرقم القومي':'29001011234567', 'المحافظة': govList[0]?.name || ''};
@@ -9713,8 +9299,10 @@ function downloadWorkersTemplate(){
   XLSX.writeFile(wb, 'نموذج_استيراد_المشتغلين.xlsx');
   showToast('✅ تم تحميل النموذج', 'success');
 }
+function downloadWorkersTemplate(...a){return ensureXLSXV11().then(()=>downloadWorkersTemplate__impl(...a)).catch(e=>console.error(e));}
 
 async function handleBulkFile(file){
+  await ensureXLSXV11();
   if(!file) return;
   if(!file.name.match(/\.(xlsx|xls)$/i)) return showToast('صيغة الملف غير مدعومة', 'danger');
 
@@ -9726,10 +9314,15 @@ async function handleBulkFile(file){
       const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
       if(rows.length === 0) return showToast('الملف فارغ', 'danger');
 
-      const { data: existing, error } = await sb.from('individuals').select('*');
+      const nidList=rows.map(r=>{const c=_findCol(r,'الرقم القومي');return c?String(r[c]).trim():'';}).filter(Boolean);
+      const seen=new Set(), dups=new Set();
+      nidList.forEach(n=>{ if(seen.has(n)) dups.add(n); seen.add(n); });
+      if(dups.size) return showToast('الملف يحتوي أرقامًا قومية مكررة ('+dups.size+'): '+[...dups].slice(0,3).join('، ')+' — صحّح الملف ثم أعد الرفع','danger');
+      const { data: existing, error } = await fetchByKeysV11('individuals','national_id',nidList);
       if(error) throw error;
 
       processImportRows(rows, existing || []);
+      if(profile?.role!=='admin') showToast('تنبيه: المطابقة تشمل السجلات المسموح لك بقراءتها فقط. راجع قائمة «الجدد» قبل الحفظ، فقد يكون بعضهم مسجلًا خارج نطاق صلاحياتك.','info');
     } catch(err) {
       showToast('تعذرت قراءة الملف: ' + err.message, 'danger');
     }
@@ -9743,8 +9336,9 @@ function _findCol(row, label){
 
 function processImportRows(rows, existingIndividuals){
   const byNid = new Map(existingIndividuals.map(i => [String(i.national_id), i]));
-  const changes = [];       // {individual, diffs:[{field,label,oldVal,newVal}]}
-  const newCandidates = []; // {nid, extracted, valid, issues}
+  const changes = [];       
+
+  const newCandidates = []; 
 
   rows.forEach(row => {
     const nidCol = _findCol(row, 'الرقم القومي');
@@ -9809,7 +9403,6 @@ function processImportRows(rows, existingIndividuals){
       diffs.push({ field, label, oldVal: displayOld, newVal, displayOld, displayNew });
     });
 
-    // حالة المشتغل: عمود خاص، يُحتسب فقط لو المستورِد أدمن (الوحيد المخوَّل بتغييرها)
     if(profile.role === 'admin'){
       const statusCol = _findCol(row, 'حالة المشتغل');
       if(statusCol !== undefined){
@@ -9970,11 +9563,10 @@ async function applyImportReview(changes, validNew, isAdminUser, btn){
   route();
 }
 
-
-/* ============ Export Workers ============ */
 async function exportWorkersExcel(){
+  if(c1202Restricted())return c1202Deny('تصدير المشتغلين');
   if(!canExportWorkers()) return showToast('غير مصرح لك بتصدير بيانات المشتغلين', 'danger');
-  const { data, error } = await sb.from('v_workers_registry').select('*');
+  const { data, error } = await fetchAllPagedV11((o)=>sb.from('v_workers_registry').select('*',o).order('id'));
   if(error) return showToast('تعذر: ' + error.message, 'danger');
   
   const rows = (data || []).map(w => ({
@@ -10010,8 +9602,8 @@ async function exportWorkersExcel(){
   exportToExcel([{name: 'المشتغلون', rows}], 'المشتغلون.xlsx');
 }
 
-/* ============ Export Project Structure ============ */
 async function exportProjectStructure(projectId){
+  if(c1202Restricted())return c1202Deny('تصدير غير مصرح به');
   const { data: proj } = await sb.from('projects').select('*').eq('id', projectId).maybeSingle();
   if(!proj) return showToast('المشروع غير موجود', 'danger');
   
@@ -10041,7 +9633,6 @@ async function exportProjectStructure(projectId){
   );
 }
 
-/* ============ Project Edit Modal ============ */
 function openProjectEditModal(){
   const proj = state.activeProjectCache;
   if(!proj) return;
@@ -10136,7 +9727,6 @@ async function submitProjectEdit(){
   }
 }
 
-/* ============ Quick Assign from Worker Detail ============ */
 async function openQuickAssignModal(workerId){
   const { data: worker } = await sb.from('v_workers_registry')
     .select('id, full_name, status, active_assignments_count, current_project_name')
@@ -10283,8 +9873,6 @@ async function inlineSetWorkerStatus(workerId, newStatus){
   }
 }
 
-/* ============ Worker Status (admin only) & Delete (admin only) ============ */
-/* ============ محافظة النقل — بنفس منطق index19 ============ */
 function openTransferModal(workerId, currentGovId){
   if(!canTransferWorker()) return showToast('غير مصرح لك بطلب نقل المشتغل', 'danger');
   const modalHtml = `
@@ -10321,29 +9909,6 @@ async function submitTransfer(workerId){
   }
 }
 
-async function approveTransfer(workerId){
-  if(profile.role !== 'admin') return showToast('متاح للمشرف العام فقط', 'danger');
-  try {
-    await callRPC('approve_transfer_request', { p_individual_id: workerId });
-    showToast('✅ تم قبول طلب النقل', 'success');
-    route();
-  } catch(err) {
-    showToast(err.message, 'danger');
-  }
-}
-
-async function rejectTransfer(workerId){
-  if(profile.role !== 'admin') return showToast('متاح للمشرف العام فقط', 'danger');
-  try {
-    await callRPC('reject_transfer_request', { p_individual_id: workerId, p_note: null });
-    showToast('تم رفض طلب النقل', 'success');
-    route();
-  } catch(err) {
-    showToast(err.message, 'danger');
-  }
-}
-
-/* ============ إجراء تأديبي / استبدال ============ */
 async function openDisciplineModal(workerId, workerName, projectId, projectName){
   const { data: candidates } = await sb.from('v_workers_registry')
     .select('id, full_name, username')
@@ -10507,7 +10072,6 @@ async function doDeleteWorker(workerId){
   }
 }
 
-/* ============ Edit Worker (comprehensive form) ============ */
 function yesNoOptions(val){
   const v = val === true ? 'true' : val === false ? 'false' : '';
   return `
@@ -10523,7 +10087,7 @@ async function districtsForGovId(govId){
   return data || [];
 }
 
-let _editWorkerOriginal = null; // نسخة أصلية للمقارنة عند حساب الفرق
+let _editWorkerOriginal = null; 
 
 async function openEditWorkerRequest(workerId){
   if(!canEditWorkerMaster()) return showToast('غير مصرح لك بتعديل بيانات المشتغل', 'danger');
@@ -10663,7 +10227,6 @@ async function submitEditWorkerRequest(workerId, isAdminUser){
     interview_notes: document.getElementById('ew_notes').value.trim()
   };
 
-  // احسب الفرق فقط عن القيم الأصلية
   const changes = {};
   for(const key of Object.keys(form)){
     const newVal = form[key];
@@ -10731,11 +10294,6 @@ async function submitEditWorkerRequest(workerId, isAdminUser){
   }
 }
 
-/* ═══════════════════════════════════════════════════════════════════
- * V10 EVOLUTION — Screens (5 new screens)
- * ═══════════════════════════════════════════════════════════════════ */
-
-/* ═══ 1. منسق المشروع ═══ */
 async function renderCoordinator(){
   if(!isCentral()) return showError('content', 'متاح لمنسق المشروع والمشرف العام فقط');
 
@@ -10833,9 +10391,9 @@ async function openAddCoordinatorModal(){
 
   try{
     const owner=String(profile?.id||'')+':'+String(profile?.role||'');
-    if(!useCached || !projectListC15.rows || projectListC15.owner!==owner){
+    if(!projectListC15.rows || projectListC15.owner!==owner || Date.now()-(projectListC15.fetchedAt||0)>60000){
       projectListC15.rows=await loadProjectsDashboard();
-      projectListC15.owner=owner;
+      projectListC15.owner=owner;projectListC15.fetchedAt=Date.now();
     }
     if(activeProjectsOnlyC15()) projectListC15.status='active';
     const all=visibleProjectsC15(projectListC15.rows);
@@ -10844,7 +10402,6 @@ async function openAddCoordinatorModal(){
     projectListC15.page=Math.max(1,Math.min(projectListC15.page,pages));
     const projects=matched.slice((projectListC15.page-1)*12,projectListC15.page*12);
     const labels={active:'نشطة',draft:'مسودات',finished:'منتهية'};
-
 
     showModal('addCoordinatorModal', `
       <div class="modal-box">
@@ -10907,7 +10464,6 @@ async function removeCoordinator(id){
   return removeCoordinatorRC1D(id);
 }
 
-/* ═══ 2. خطة العمالة ═══ */
 async function renderWorkforcePlan(){
   setBreadcrumb([{label:'خطط القوى البشرية'}]);
   const c=document.getElementById('content');
@@ -10997,7 +10553,6 @@ async function submitAddWorkforcePlan(){
   return openGlobalWorkforceProjectRC1G();
 }
 
-/* ═══ 3. أسعار المشروع ═══ */
 async function renderRates(){
   if(!isCentral()) return showError('content', 'متاح لمنسق المشروع والمشرف العام فقط');
   setBreadcrumb([{label:'الأسعار — كل المشاريع'}]);
@@ -11095,105 +10650,6 @@ async function submitAddRate(){
   } catch(err) { showToast(err.message, 'danger'); }
 }
 
-/* ═══ 4. الاستثناءات ═══ */
-async function renderExceptions(){
-  const role = profile.role;
-  if(!['admin','project_manager','region','office'].includes(role)){
-    return showError('content', 'غير مصرح');
-  }
-  setBreadcrumb([{label:'الاستثناءات'}]);
-  const c = document.getElementById('content');
-  showLoading('content', 'جارِ التحميل...');
-  try {
-    let query = sb.from('exception_requests')
-      .select('*, individuals(full_name, national_id), projects(name), profiles:requested_by(full_name)')
-      .order('requested_at', {ascending: false});
-    if(role === 'office' || role === 'region'){
-      query = query.eq('requested_by', profile.id);
-    }
-    const { data: requests } = await query;
-    const all = requests || [];
-    const canManage = isCentral();
-    c.innerHTML = `
-      <div class="flex-between" style="margin-bottom:18px;">
-        <div>
-          <h2 style="margin:0;font-size:20px;">⚠️ الاستثناءات</h2>
-          <div class="subtle">${all.length} طلب</div>
-        </div>
-        ${['office','region','admin'].includes(role) ? `<button class="btn btn-amber" onclick="openAddExceptionModal()">+ طلب استثناء</button>` : ''}
-      </div>
-      ${all.length === 0 ? `
-        <div class="empty-rich"><div class="icon">✅</div><h3>لا توجد استثناءات</h3></div>
-      ` : `
-        <div class="card" style="padding:0;overflow:hidden;">
-          <div class="table-wrap"><table>
-            <thead><tr><th>النوع</th><th>الفرد</th><th>المشروع</th><th>السبب</th><th>الحالة</th><th>التاريخ</th>${canManage ? '<th></th>' : ''}</tr></thead>
-            <tbody>${all.map(r => `
-              <tr>
-                <td><span class="badge badge-navy">${r.request_type === 'conflict' ? 'تعارض' : r.request_type === 'assignment' ? 'تكليف' : 'أخرى'}</span></td>
-                <td>${esc(r.individuals?.full_name || '—')}</td>
-                <td>${esc(r.projects?.name || '—')}</td>
-                <td class="subtle" style="max-width:250px;">${esc(r.reason || '—')}</td>
-                <td><span class="badge ${r.status === 'pending' ? 'badge-amber' : r.status === 'approved' ? 'badge-success' : 'badge-danger'}">${r.status === 'pending' ? 'بانتظار' : r.status === 'approved' ? 'معتمد' : 'مرفوض'}</span></td>
-                <td class="nums subtle">${fmtDate(r.requested_at)}</td>
-                ${canManage ? `<td>${r.status === 'pending' ? `
-                  <button class="link-btn" onclick="approveException('${r.id}')">اعتماد</button>
-                  <button class="link-btn danger" onclick="rejectException('${r.id}')">رفض</button>
-                ` : '—'}</td>` : ''}
-              </tr>`).join('')}
-            </tbody>
-          </table></div>
-        </div>
-      `}`;
-  } catch(err) { showError('content', err.message); }
-}
-
-async function openAddExceptionModal(){
-  const { data: individuals } = await sb.from('individuals').select('id, full_name').limit(200);
-  const { data: projects } = await projectQueryC15(sb.from('projects').select('id, name')).order('name');
-  showModal('addExceptionModal', `
-    <div class="modal-box">
-      <h3>+ طلب استثناء</h3>
-      <div class="field" style="margin-bottom:14px;"><label>النوع *</label>
-        <select id="ex_type" class="input">
-          <option value="conflict">تعارض في التكليف</option>
-          <option value="assignment">استثناء تكليف</option>
-          <option value="other">أخرى</option>
-        </select></div>
-      <div class="field" style="margin-bottom:14px;"><label>الفرد</label>
-        <select id="ex_individual" class="input"><option value="">— اختر —</option>
-          ${(individuals||[]).map(i => `<option value="${i.id}">${esc(i.full_name)}</option>`).join('')}
-        </select></div>
-      <div class="field" style="margin-bottom:14px;"><label>المشروع</label>
-        <select id="ex_project" class="input"><option value="">— اختر —</option>
-          ${(projects||[]).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
-        </select></div>
-      <div class="field" style="margin-bottom:14px;"><label>السبب *</label>
-        <textarea id="ex_reason" class="input" rows="3" placeholder="اشرح سبب طلب الاستثناء..."></textarea></div>
-      <div class="flex-end">
-        <button class="btn btn-outline" onclick="closeModal('addExceptionModal')">إلغاء</button>
-        <button class="btn btn-primary" onclick="submitAddException()">📤 إرسال</button>
-      </div>
-    </div>`);
-}
-
-async function submitAddException(){
-  const type = document.getElementById('ex_type').value;
-  const individualId = document.getElementById('ex_individual').value || null;
-  const projectId = document.getElementById('ex_project').value || null;
-  const reason = document.getElementById('ex_reason').value.trim();
-  if(!reason || reason.length < 10) return showToast('السبب مطلوب (10 أحرف على الأقل)', 'danger');
-  try {
-    await callRPC('create_exception_request', {
-      p_request_type: type, p_individual_id: individualId,
-      p_project_id: projectId, p_reason: reason
-    });
-    closeModal('addExceptionModal');
-    showToast('✅ تم إرسال الطلب', 'success');
-    renderExceptions();
-  } catch(err) { showToast(err.message, 'danger'); }
-}
-
 async function approveException(id){
   const note = prompt('ملاحظة (اختياري):') || null;
   try {
@@ -11216,55 +10672,6 @@ async function rejectException(id){
     renderExceptions();
   } catch(err) { showToast(err.message, 'danger'); }
 }
-
-/* ═══ 5. التعارضات ═══ */
-async function renderConflicts(){
-  setBreadcrumb([{label:'التعارضات'}]);
-  const c = document.getElementById('content');
-  showLoading('content', 'جارِ التحميل...');
-  try {
-    const { data: conflicts } = await sb.from('worker_conflicts')
-      .select('*, individuals(full_name, national_id)')
-      .order('created_at', {ascending: false})
-      .limit(200);
-    const all = conflicts || [];
-    c.innerHTML = `
-      <div class="flex-between" style="margin-bottom:18px;">
-        <div>
-          <h2 style="margin:0;font-size:20px;">🔴 التعارضات</h2>
-          <div class="subtle">${all.length} تعارض</div>
-        </div>
-      </div>
-      ${all.length === 0 ? `
-        <div class="empty-rich"><div class="icon">✅</div><h3>لا توجد تعارضات</h3></div>
-      ` : `
-        <div class="card" style="padding:0;overflow:hidden;">
-          <div class="table-wrap"><table>
-            <thead><tr><th>الفرد</th><th>من تاريخ</th><th>إلى تاريخ</th><th>الحالة</th><th>تاريخ الكشف</th></tr></thead>
-            <tbody>${all.map(x => `
-              <tr>
-                <td><strong>${esc(x.individuals?.full_name || '—')}</strong><br><span class="subtle nums">${esc(x.individuals?.national_id || '')}</span></td>
-                <td class="nums subtle">${fmtDate(x.overlap_from)}</td>
-                <td class="nums subtle">${fmtDate(x.overlap_to)}</td>
-                <td><span class="badge ${x.status === 'detected' ? 'badge-danger' : x.status === 'resolved' ? 'badge-success' : 'badge-amber'}">${x.status === 'detected' ? 'مكتشف' : x.status === 'resolved' ? 'محلول' : 'تم تجاوزه'}</span></td>
-                <td class="nums subtle">${fmtDate(x.created_at)}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table></div>
-        </div>
-      `}`;
-  } catch(err) { showError('content', err.message); }
-}
-
-/* ═══ نهاية V10 Evolution ═══ */
-
-/* ═══════════════════════════════════════════════════════════════════
- * V10 EVOLUTION — Project Detail Tabs (6 دوال)
- * كل تاب تحت المشروع مباشرة
- * ═══════════════════════════════════════════════════════════════════ */
-
-/* ═══ 1. وحدات العمل تحت المشروع ═══ */
-
 
 async function openUploadUnitsModal(projectId){
   if(!isCentral()) return showToast('متاح لمنسق المشروع فقط', 'danger');
@@ -11362,7 +10769,6 @@ async function submitAssignUnitToResearcher(unitId){
   } catch(err) { showToast(err.message, 'danger'); }
 }
 
-/* ═══ 2. التدريب تحت المشروع ═══ */
 async function renderProjectTrainingTab(proj){
   const body = document.getElementById('projectBody');
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
@@ -11493,15 +10899,16 @@ async function submitTrainingModel(projectId, existingId){
   } catch(err) { showToast(err.message, 'danger'); }
 }
 
-/* ═══ 3. خطة العمالة تحت المشروع ═══ */
 async function renderProjectWorkforceTab(proj){
   const body=document.getElementById('projectBody');
   body.innerHTML=`<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ تحميل اشتراطات القوى البشرية...</h3></div>`;
 
   try{
-    const all=await callRPC('get_project_workforce_rules_rc1j',{
+    const raw=await callRPC(c1202Restricted()?'c1202_workforce_rules':'get_project_workforce_rules_rc1j',{
       p_project_id:proj.id
     }) || [];
+    const all=raw.filter(r=>!c1202Restricted()||(c1202GetGovId(r)!=null&&c1202AllowGov(c1202GetGovId(r))))
+      .sort((a,b)=>c1202GovOrder(c1202GetGovId(a),c1202GetGovId(b))||c1202CodeOrder.compare(String(a.role||''),String(b.role||'')));
 
     const canEdit=state.currentProjectCanManage===true || isAdmin();
 
@@ -11648,7 +11055,6 @@ async function submitWorkforcePlanItem(projectId){
   return submitWorkforceRuleRC1G(projectId);
 }
 
-/* ═══ 4. أسعار المشروع تحت المشروع ═══ */
 async function renderProjectRatesTab(proj){
   const body = document.getElementById('projectBody');
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
@@ -11751,7 +11157,6 @@ async function submitProjectRate(projectId){
   } catch(err) { showToast(err.message, 'danger'); }
 }
 
-/* ═══ 5. المنسق تحت المشروع ═══ */
 async function renderProjectCoordinatorTab(proj){
   const body = document.getElementById('projectBody');
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
@@ -11874,7 +11279,6 @@ async function removeProjectCoordinator(id){
   return removeProjectCoordinatorRC1D(id);
 }
 
-/* ═══ 6. الإعدادات تحت المشروع ═══ */
 async function renderProjectSettingsTab(proj){
   const body = document.getElementById('projectBody');
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
@@ -11945,11 +11349,6 @@ async function renderProjectSettingsTab(proj){
   } catch(err) { showError('projectBody', err.message); }
 }
 
-
-/* =====================================================================
- * V11.0-RC1 — Project Workspace / Execution / Quality / Finance
- * ===================================================================== */
-
 function v11CanManageFinance(){ return !!state.currentProjectCanManage; }
 function v11CanOperate(){ return !!state.currentProjectCanOperate; }
 function v11Money(v){ return `${fmtNum(Number(v || 0))} ج.م`; }
@@ -11986,8 +11385,6 @@ async function v11GetActiveAssignments(projectId){
   return rows || [];
 }
 
-
-/* ---------------- V11 RC1B: Project Manager Administration ---------------- */
 async function openManageProjectManagersV11(projectId){
   if(!isAdmin()) return showToast('متاح للمشرف العام فقط','danger');
 
@@ -12061,7 +11458,6 @@ async function assignProjectManagerRC1B(projectId,profileId){
     closeModal('manageProjectManagersV11Modal');
     showToast('✅ تم تعيين مسؤول المشروع وتفعيل صلاحياته','success');
 
-    // Refresh the setup panel from the authoritative RPC result.
     if(state.activeProjectId === projectId && state.projectTab === 'setup'){
       await renderProjectSetupV11(state.activeProjectCache);
     }else{
@@ -12094,9 +11490,6 @@ async function removeProjectManagerRC1B(projectId,profileId){
   }
 }
 
-
-
-/* ---------------- V11 RC1M: Coordinator Administration ---------------- */
 async function refreshCoordinatorCandidatesRC1D(){
   const projectId = document.getElementById('co_project')?.value;
   const select = document.getElementById('co_profile');
@@ -12243,12 +11636,6 @@ async function removeProjectCoordinatorRC1D(id){
   }
 }
 
-
-
-
-/* C1 — Project setup, calendar dates and form submission guards.
-   Finance baseline: FINANCE-STABLE. Requires matching C1.2 reader: get_project_assigned_managers_v11(uuid).
-   Client checks supplement existing RPC/RLS authorization; they do not replace it. */
 const projectWritesC1 = new Set();
 function todayProjectC1(){
   const d=new Date();
@@ -12310,7 +11697,6 @@ function projectSectionErrorC1(label,error){
   return `<div class="v11-note" role="alert">تعذر تحميل ${esc(label)}: ${esc(error)}. أعد فتح تبويب إعداد المشروع للمحاولة مجددًا.</div>`;
 }
 
-/* ---------------- RC1E: Project Cycles ---------------- */
 function versionTypeArRC1E(v){return {rule_change:'قاعدة تشغيل',financial_change:'تغيير مالي / أسعار',structure_change:'تغيير هيكل',target_change:'تغيير مستهدف',other:'آخر'}[v]||v||'—';}
 function cycleStatusArRC1E(s){return {draft:'مسودة',open:'مفتوحة',closed:'مغلقة',settled:'تمت التسوية',cancelled:'ملغاة'}[s]||s;}
 async function selectProjectCycleRC1E(id){state.activeCycleId=id||null;await route();}
@@ -12405,8 +11791,6 @@ async function submitCreateCycleRC1E(projectId){
   });
 }
 
-/* ---------------- V11 RC1M: Workforce eligibility ---------------- */
-
 function workforceContractsArRC1F(values){
   const v=Array.isArray(values)?values:[];
   const labels=[];
@@ -12480,10 +11864,6 @@ function toggleAssignmentWorkforceOverrideRC1F(prefix){
   wrap.style.display=opt?.dataset?.eligible==='0'?'block':'none';
 }
 
-
-
-/* ---------------- V11 RC1M: Multi-governorate workforce rules ---------------- */
-
 function toggleAllWorkforceGovsRC1G(){
   const all=document.getElementById('wr_gov_all');
   const boxes=Array.from(document.querySelectorAll('.wr-gov'));
@@ -12528,10 +11908,6 @@ async function openGlobalWorkforceProjectRC1G(){
   closeModal('addWorkforcePlanModal');
   openProject(projectId,'workforce');
 }
-
-
-
-/* ---------------- V11 RC1M: Conditional outside-governorate researchers ---------------- */
 
 function toggleOutsideResearcherQuestionRC1J(){
   const role=document.getElementById('wr_role')?.value;
@@ -12785,9 +12161,8 @@ async function submitWorkforceRuleRC1J(projectId,planId=null){
   }
 }
 
-
-/* ---------------- Overview ---------------- */
 async function renderProjectOverviewV11(proj, pg){
+  if(c1202Restricted())return await c1202RenderLimitedOverview(proj,pg);
   const body = document.getElementById('projectBody');
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ تحميل لوحة المشروع...</h3></div>`;
 
@@ -12871,8 +12246,16 @@ async function renderProjectOverviewV11(proj, pg){
   }catch(err){ showError('projectBody', err.message); }
 }
 
-/* ---------------- Setup & versions ---------------- */
 async function renderProjectSetupV11(proj){
+  if(c1202Restricted()){
+    const b=document.getElementById('projectBody');
+    b.innerHTML=`<div class="card"><h3>بيانات المشروع</h3>
+      <table><tr><td>الاسم</td><td>${esc(proj.name)}</td></tr>
+      <tr><td>الكود</td><td>${esc(proj.code)}</td></tr>
+      <tr><td>الفترة</td><td>${fmtDate(proj.start_date)} → ${fmtDate(proj.end_date)}</td></tr>
+      <tr><td>الحالة</td><td>${esc(proj.status||'—')}</td></tr></table></div>`;
+    return;
+  }
   const body=document.getElementById('projectBody');
   try{
     const requestToken={};
@@ -12957,8 +12340,6 @@ async function submitProjectVersionV11(projectId){
   });
 }
 
-/* ---------------- Training ---------------- */
-
 function trainingTypeArRC1L(v){
   return v==='central'?'مركزي':'إقليمي';
 }
@@ -12987,11 +12368,11 @@ async function renderProjectTrainingV11Tab(proj){
 
   try{
     const [ops,canManage]=await Promise.all([
-      callRPC('get_training_operations_v11',{
+      callRPC(c1202Restricted()?'c1202_training_operations':'get_training_operations_v11',{
         p_project_id:proj.id,
         p_cycle_id:proj.project_mode==='recurring'?(state.activeCycleId||null):null
       }),
-      callRPC('can_manage_project_training_v11',{p_project_id:proj.id})
+      c1202Restricted()?Promise.resolve(false):callRPC('can_manage_project_training_v11',{p_project_id:proj.id})
     ]);
 
     body.innerHTML=`
@@ -13034,10 +12415,10 @@ async function renderProjectTrainingV11Tab(proj){
                   </td>
                   <td class="nums">${fmtDate(o.start_date)} → ${fmtDate(o.end_date)}</td>
                   <td class="nums">${fmtNum(o.unit_count||0)}</td>
-                  <td class="nums">${fmtNum(o.trainee_count||0)}</td>
+                  <td class="nums">${o.trainee_count==null?'—':fmtNum(o.trainee_count)}</td>
                   <td>
-                    <strong class="nums">${fmtNum(o.attendance_percent||0)}%</strong>
-                    <div class="subtle nums">${fmtNum(o.recorded_attendance||0)} / ${fmtNum(o.expected_attendance||0)}</div>
+                    <strong class="nums">${o.attendance_percent==null?'—':fmtNum(o.attendance_percent)+'%'}</strong>
+                    <div class="subtle nums">${o.recorded_attendance==null?'—':fmtNum(o.recorded_attendance)} / ${o.expected_attendance==null?'—':fmtNum(o.expected_attendance)}</div>
                   </td>
                   <td>
                     <span class="badge ${o.attendance_status==='closed'?'badge-success':'badge-amber'}">
@@ -13159,6 +12540,7 @@ async function backToTrainingOperationsRC1L(){
   await renderProjectTrainingV11Tab(state.activeProjectCache);
 }
 async function openTrainingOperationTabRC1L(tab){
+  if(tab==='finance'&&c1202Restricted())return c1202Deny('مكافآت التدريب');
   state.trainingOperationTab=tab;
   await renderTrainingOperationWorkspaceRC1L(state.activeProjectCache,state.activeTrainingOperationId);
 }
@@ -13168,17 +12550,30 @@ async function renderTrainingOperationWorkspaceRC1L(proj,eventId){
   body.innerHTML=`<div class="empty-state"><span class="spinner"></span> جارِ تحميل العملية...</div>`;
 
   try{
-    await callRPC('sync_training_event_participants_v11',{p_event_id:eventId});
+    if(!c1202Restricted()) await callRPC('sync_training_event_participants_v11',{p_event_id:eventId});
 
     const [evRes,units,parts,staff,canManage]=await Promise.all([
-      sb.from('training_events').select('*').eq('id',eventId).single(),
-      callRPC('get_training_units_v11',{p_event_id:eventId}),
-      callRPC('get_training_operation_participants_v11',{p_event_id:eventId}),
-      callRPC('get_training_operation_staff_v11',{p_event_id:eventId}),
-      callRPC('can_manage_training_setup_v11',{p_event_id:eventId})
+      c1202Restricted()
+        ? callRPC('c1202_training_event_info',{p_event_id:eventId}).then(data=>({data,error:null}))
+        : sb.from('training_events').select('*').eq('id',eventId).single(),
+      callRPC(c1202Restricted()?'c1202_training_units':'get_training_units_v11',{p_event_id:eventId}),
+      callRPC(c1202Restricted()?'c1202_training_participants':'get_training_operation_participants_v11',{p_event_id:eventId}),
+      c1202Restricted()?Promise.resolve([]):callRPC('get_training_operation_staff_v11',{p_event_id:eventId}),
+      c1202Restricted()?Promise.resolve(false):callRPC('can_manage_training_setup_v11',{p_event_id:eventId})
     ]);
     if(evRes.error) throw evRes.error;
-    const ev=evRes.data, us=units||[], ps=parts||[], st=staff||[];
+    if(c1202Restricted() && !(units||[]).length)
+      throw new Error('لا توجد نقطة تدريب ضمن المحافظات المصرح لك بها');
+    const ev=evRes.data,
+      us=(units||[]).sort((a,b)=>c1202GovOrder(a.execution_governorate_id,b.execution_governorate_id)||c1202CodeOrder.compare(String(a.unit_code||''),String(b.unit_code||''))),
+      ps=(parts||[]).sort((a,b)=>c1202GovOrder(a.assignment_governorate_id??govList.find(g=>g.name===a.assignment_governorate_name)?.id,b.assignment_governorate_id??govList.find(g=>g.name===b.assignment_governorate_name)?.id)||c1202CodeOrder.compare(String(a.unit_code||''),String(b.unit_code||''))||String(a.full_name||'').localeCompare(String(b.full_name||''),'ar')),
+      st=staff||[];
+    if(c1202Restricted()&&state.trainingOperationTab==='finance')state.trainingOperationTab='overview';
+    if(c1202Restricted())for(const u of us){
+      const related=ps.filter(p=>String(p.unit_code||'')===String(u.unit_code||''));
+      u.trainee_count=related.filter(p=>p.training_role==='trainee').length;
+      u.recorded_attendance=related.reduce((n,p)=>n+Number(p.attendance_days||0),0);
+    }
     const tab=state.trainingOperationTab||'overview';
     const expected=us.reduce((a,u)=>a+Number(u.expected_attendance||0),0);
     const recorded=us.reduce((a,u)=>a+Number(u.recorded_attendance||0),0);
@@ -13212,7 +12607,7 @@ async function renderTrainingOperationWorkspaceRC1L(proj,eventId){
           ['units','🧭',ev.training_type==='central'?'الدفعات':'نقاط التدريب'],
           ['participants','👥','المشاركون'],
           ['attendance','🗓️','الحضور اليومي'],
-          ['finance','💰','المكافآت']
+          ...(!c1202Restricted()?[['finance','💰','المكافآت']]:[])
         ].map(([id,icon,label])=>`
           <button class="workspace-tab ${tab===id?'active':''}" onclick="openTrainingOperationTabRC1L('${id}')">${icon} ${label}</button>
         `).join('')}
@@ -13231,7 +12626,7 @@ async function renderTrainingOperationWorkspaceRC1L(proj,eventId){
           <div class="card"><div class="subtle">الوحدات</div><strong class="nums">${us.length}</strong></div>
           <div class="card"><div class="subtle">المتدربون</div><strong class="nums">${trainees.length}</strong></div>
           <div class="card"><div class="subtle">الحضور المسجل</div><strong class="nums">${recorded} / ${expected}</strong></div>
-          <div class="card"><div class="subtle">المكافآت الحالية</div><strong class="nums">${v11Money(ps.reduce((s,p)=>s+Number(p.entitlement_amount||0),0))}</strong></div>
+          ${!c1202Restricted()?`<div class="card"><div class="subtle">المكافآت الحالية</div><strong class="nums">${v11Money(ps.reduce((s,p)=>s+Number(p.entitlement_amount||0),0))}</strong></div>`:''}
         </div>
 
         <div class="grid cols-2">
@@ -13274,14 +12669,14 @@ async function renderTrainingOperationWorkspaceRC1L(proj,eventId){
                 <td class="nums">${fmtDate(u.start_date)} → ${fmtDate(u.end_date)}</td>
                 <td>${(u.governorate_names||[]).map(g=>`<span class="chip">${esc(g)}</span>`).join(' ')||'—'}</td>
                 <td class="nums">${fmtNum(u.trainee_count||0)}</td>
-                <td class="nums">${fmtNum(u.recorded_attendance||0)} / ${fmtNum(u.expected_attendance||0)}</td>
+                <td class="nums">${fmtNum(u.recorded_attendance||0)} / ${u.expected_attendance==null?'—':fmtNum(u.expected_attendance)}</td>
                 <td><span class="badge ${u.status==='completed'?'badge-success':u.status==='active'?'badge-amber':'badge-navy'}">${trainingUnitStatusArRC1L(u.status)}</span></td>
                 <td>
                   ${canManage&&ev.attendance_status!=='closed'&&Number(u.recorded_attendance||0)===0?`
                     <button class="link-btn" onclick="openTrainingUnitModalRC1L('${eventId}','${u.id}')">تعديل</button>
                     <button class="link-btn danger" onclick="deleteTrainingUnitRC1M('${u.id}','${esc(u.title||u.unit_code)}')">حذف</button>
                   `:''}
-                  ${u.status!=='completed'&&u.status!=='cancelled'?`<button class="link-btn" onclick="completeTrainingUnitRC1L('${u.id}')">إكمال</button>`:''}
+                  ${!c1202Restricted()&&canManage&&u.status!=='completed'&&u.status!=='cancelled'?`<button class="link-btn" onclick="completeTrainingUnitRC1L('${u.id}')">إكمال</button>`:''}
                 </td>
               </tr>
             `).join('')}</tbody>
@@ -13295,19 +12690,19 @@ async function renderTrainingOperationWorkspaceRC1L(proj,eventId){
         <div class="v11-section-title">
           <div><h3>👥 المشاركون</h3><div class="subtle">المتدربون آليًا حسب محافظة التسكين؛ الأدوار التدريبية الأخرى يمكن إضافتها يدويًا.</div></div>
           <div style="display:flex;gap:7px;">
-            <button class="btn btn-outline btn-sm" onclick="syncTrainingParticipantsRC1L('${eventId}')">🔄 مزامنة</button>
+            ${!c1202Restricted()&&canManage?`<button class="btn btn-outline btn-sm" onclick="syncTrainingParticipantsRC1L('${eventId}')">🔄 مزامنة</button>`:''}
             ${canManage?`<button class="btn btn-amber btn-sm" onclick="openTrainingParticipantsV11('${eventId}','${proj.id}')">إدارة المشاركين</button>`:''}
           </div>
         </div>
         <div class="card" style="padding:0;overflow:hidden;"><div class="table-wrap"><table>
-          <thead><tr><th>الاسم</th><th>الصفة</th><th>محافظة المشروع</th><th>الوحدة</th><th>أيام الحضور</th><th>النوع</th><th>المبلغ</th></tr></thead>
+          <thead><tr><th>الاسم</th><th>الصفة</th><th>محافظة المشروع</th><th>الوحدة</th><th>أيام الحضور</th><th>النوع</th>${!c1202Restricted()?'<th>المبلغ</th>':''}</tr></thead>
           <tbody>${ps.map(p=>`
             <tr style="${p.participant_status!=='eligible'?'opacity:.55;':''}">
               <td>${esc(p.full_name||'—')}</td><td>${v11TrainingRoleAr(p.training_role)}</td>
               <td>${esc(p.assignment_governorate_name||'—')}</td><td>${esc(p.unit_code||'—')}</td>
               <td class="nums">${p.attendance_days||0}</td><td>${v11ContractLabel(p.contract_type)}</td>
-              <td class="nums">${v11Money(p.entitlement_amount||0)}</td>
-            </tr>`).join('')||'<tr><td colspan="7">لا يوجد مشاركون</td></tr>'}</tbody>
+              ${!c1202Restricted()?`<td class="nums">${v11Money(p.entitlement_amount||0)}</td>`:''}
+            </tr>`).join('')||'<tr><td colspan="${c1202Restricted()?6:7}">لا يوجد مشاركون</td></tr>'}</tbody>
         </table></div></div>
       `;
     }
@@ -13379,6 +12774,7 @@ async function renderTrainingOperationWorkspaceRC1L(proj,eventId){
 }
 
 async function syncTrainingParticipantsRC1L(eventId){
+  if(c1202Restricted()) return showToast('غير مصرح بمزامنة المشاركين', 'danger');
   try{
     const n=await callRPC('sync_training_event_participants_v11',{p_event_id:eventId});
     showToast(`✅ تمت مزامنة المشاركين (${n||0})`,'success');
@@ -13477,6 +12873,7 @@ async function saveTrainingUnitRC1L(eventId,unitId=null){
 }
 
 async function completeTrainingUnitRC1L(unitId){
+  if(c1202Restricted()) return showToast('غير مصرح بإكمال وحدة التدريب', 'danger');
   if(!confirm('إكمال هذه الوحدة؟ يجب تسجيل حضور جميع المتدربين لكل أيامها.')) return;
   try{
     await callRPC('set_training_unit_completed_v11',{p_unit_id:unitId});
@@ -13542,7 +12939,7 @@ async function loadTrainingAttendanceRC1L(){
   grid.innerHTML='<div class="empty-state"><span class="spinner"></span> جارِ التحميل...</div>';
 
   try{
-    const rows=await callRPC('get_training_unit_attendance_v11',{p_unit_id:unitId,p_date:date})||[];
+    const rows=await callRPC(c1202Restricted()?'c1202_training_attendance':'get_training_unit_attendance_v11',{p_unit_id:unitId,p_date:date})||[];
     const canSave=rows.some(r=>r.can_record&&!r.attendance_id);
     grid.innerHTML=`
       <div class="table-wrap"><table>
@@ -13605,7 +13002,7 @@ async function closeTrainingAttendanceRC1L(eventId){
   try{
     await callRPC('close_training_operation_attendance_v11',{p_event_id:eventId});
     showToast('✅ تم إغلاق الحضور للعملية بالكامل','success');
-    state.trainingOperationTab='finance';
+    state.trainingOperationTab=c1202Restricted()?'overview':'finance';
     await renderTrainingOperationWorkspaceRC1L(state.activeProjectCache,eventId);
   }catch(err){showToast(err.message,'danger');}
 }
@@ -13666,12 +13063,6 @@ async function addTrainingRateV11(eventId,projectId){
   if(error) return showToast(error.message,'danger');
   closeModal('trainingRatesV11Modal'); await openTrainingRatesV11(eventId,projectId);
 }
-
-
-/* ===================================================================
- * V11.0-FINANCE-STABLE — TRAINING FINANCE EXTENSION
- * bonus / deduction / subsistence / training transport / support people
- * =================================================================== */
 
 const trainingFinanceRC1P1={
   eventId:null,
@@ -13867,6 +13258,7 @@ async function trainingSupportLoadDirectRC1P1(eventId){
 }
 
 async function renderTrainingFinanceExtensionRC1P1(eventId,canManage,ev){
+  if(c1202Restricted())return c1202Deny('مكافآت التدريب');
   trainingFinanceRC1P1.eventId=eventId;
   trainingFinanceRC1P1.canManage=!!canManage;
   trainingFinanceRC1P1.event=ev||null;
@@ -14078,10 +13470,6 @@ async function saveTrainingFinanceAdjustmentsRC1P1(){
     return showToast('لا توجد صفوف متاحة للتعديل','danger');
   }
 
-  /* B4.3:
-     لا نعيد تحميل الشاشة إلا بعد التأكد أن PostgreSQL أعاد الصف المحفوظ.
-     هذا يمنع اختفاء القيم من الواجهة عند UPDATE=0 rows بسبب RLS.
-  */
   const pending=[];
 
   try{
@@ -14118,7 +13506,6 @@ async function saveTrainingFinanceAdjustmentsRC1P1(){
         throw new Error(`الخصم أكبر من استحقاق ${r.full_name}`);
       }
 
-      /* نحفظ الصفوف التي تغيّرت فقط. */
       const changed=
         bonus!==Number(r.bonus_amount||0) ||
         deduction!==Number(r.deduction_amount||0) ||
@@ -14152,8 +13539,6 @@ async function saveTrainingFinanceAdjustmentsRC1P1(){
 
     let saved=0;
 
-    /* حفظ متتابع ومتحقق منه.
-       لا نستخدم Promise.all حتى نعرف بالضبط أي صف فشل. */
     for(const item of pending){
       const r=item.row;
 
@@ -14191,7 +13576,6 @@ async function saveTrainingFinanceAdjustmentsRC1P1(){
         );
       }
 
-      /* نحدث الذاكرة فورًا حتى تظل القيم موجودة حتى قبل إعادة التحميل. */
       Object.assign(r,{
         base_training_amount:Number(data.base_training_amount||0),
         bonus_amount:Number(data.bonus_amount||0),
@@ -14207,7 +13591,6 @@ async function saveTrainingFinanceAdjustmentsRC1P1(){
 
     showToast(`✅ تم حفظ والتحقق من ${saved} تعديل مالي`,'success');
 
-    /* إعادة تحميل من قاعدة البيانات بعد نجاح التحقق فقط. */
     const fresh=await trainingFinanceLoadDirectRC1P1(
       eventId,
       trainingFinanceRC1P1.canManage,
@@ -14218,8 +13601,7 @@ async function saveTrainingFinanceAdjustmentsRC1P1(){
     renderTrainingParticipantFinanceGridRC1P1();
 
   }catch(err){
-    /* لا نعيد رسم الجدول عند الفشل.
-       بذلك تبقى القيم التي كتبها المستخدم ظاهرة ولا تضيع. */
+
     showToast(err.message||'تعذر حفظ التعديلات المالية','danger');
   }
 }
@@ -14942,6 +14324,7 @@ async function issueTrainingDocsV11(eventId,reissue=false){
 }
 
 async function printTrainingDocsV11(eventId){
+  if(c1202Restricted())return c1202Deny('تصدير غير مصرح به');
   try{
     const {data:docs,error}=await sb.from('financial_documents')
       .select('*, financial_document_lines(*)')
@@ -14954,14 +14337,6 @@ async function printTrainingDocsV11(eventId){
     if(!docs?.length){
       return showToast('لم يتم إصدار مستندات لهذه العملية بعد','danger');
     }
-
-    /* RC1O1-v3
-       لا نغير آلية إصدار المستند أو الحساب المالي.
-       نُحسن فقط العرض النهائي:
-       - الرقم الكودي الحقيقي للداخلي/الاستعانة.
-       - الخارجي بدون رقم كودي.
-       - الترتيب: المحافظة ثم كود الهيكل.
-    */
 
     const allLines=docs.flatMap(d=>d.financial_document_lines||[]);
     const individualIds=[...new Set(
@@ -15219,9 +14594,6 @@ async function printTrainingDocsV11(eventId){
   }
 }
 
-
-/* ---------------- V11 RC1M: Training edit/delete ---------------- */
-
 async function deleteTrainingUnitRC1M(unitId,label){
   if(!confirm(
     `حذف «${label}»؟\n\nيسمح بالحذف فقط قبل تسجيل أي حضور في هذه الدفعة/النقطة.`
@@ -15312,9 +14684,6 @@ async function submitDeleteTrainingOperationRC1M(eventId){
   }
 }
 
-
-/* ---------------- Execution balances ---------------- */
-
 async function openExecutionBalanceV11(projectId){
   const a=await v11GetActiveAssignments(projectId);
   const today=new Date().toISOString().slice(0,10);
@@ -15361,7 +14730,6 @@ async function saveExecutionFactorV11(id){
   showToast('✅ تم اعتماد المعامل','success');renderProjectExecutionV11Tab(state.activeProjectCache);
 }
 
-/* ---------------- Quality ---------------- */
 async function renderProjectQualityV11Tab(proj){
   const body=document.getElementById('projectBody');
   try{
@@ -15422,9 +14790,6 @@ async function approveQualityIncidentV11(id){
   const note=prompt('ملاحظة الاعتماد (اختياري):')||null;
   try{const value=await callRPC('approve_quality_incident_v11',{p_incident_id:id,p_review_note:note});showToast(`✅ تم الإثبات. الجزاء: ${v11Money(value)}`,'success');renderProjectQualityV11Tab(state.activeProjectCache);}catch(e){showToast(e.message,'danger');}
 }
-
-/* ---------------- Finance ---------------- */
-/* ---------------- Finance Q1 ---------------- */
 
 const financeQ1={
   tab:'overview',
@@ -15544,7 +14909,6 @@ async function financeQ1LoadBatches(projectId){
   });
   return financeQ1.batches;
 }
-
 
 async function financeQ1EnrichOverviewRows(projectId,pos){
   const rows=(pos||[]).map(x=>({...x}));
@@ -15751,14 +15115,6 @@ async function financeQ1EnrichOverviewRows(projectId,pos){
   return {rows:enriched,trainingTotal};
 }
 
-
-/* ============================================================
-   RC1Q2-B — كشوف الدفعة المستقلة
-   كل دفعة تحتوي على:
-   داخلي / خارجي / استعانة
-   ولكل كشف حالة معالجة مستقلة.
-   ============================================================ */
-
 function financeQ2EmployeeTypeAr(v){
   return {
     internal:'داخلي',
@@ -15933,9 +15289,6 @@ async function syncTrainingBatchSheetsQ2(batch,eventId){
       sheet=data;
     }
 
-    /*
-      بعد الدفع لا نعيد بناء السطور لأن الكشف أصبح أثرًا ماليًا تاريخيًا.
-    */
     if(sheet.payment_status!=='paid'){
       const {error:deleteErr}=await sb
         .from('project_payment_batch_lines_v11')
@@ -16189,7 +15542,6 @@ async function setPaymentSheetUnderReviewQ2(sheetId,batchId){
   }
 }
 
-
 function financeQ2IIsAdvanceBatch(batch){
   return batch?.batch_type==='advance';
 }
@@ -16197,7 +15549,6 @@ function financeQ2IIsAdvanceBatch(batch){
 function financeQ2IIsSettlementPayment(batch){
   return ['partial_settlement','final_settlement'].includes(batch?.batch_type);
 }
-
 
 function financeQ2JIsBalanceReductionBatch(batch){
   return financeQ2IIsAdvanceBatch(batch)
@@ -16572,15 +15923,6 @@ async function confirmPaymentSheetQ2(sheetId,batchId){
   }
 }
 
-/* ============================================================
-   RC1Q2-D1 — مستحقو دفعات الميدان
-   - قائمة المشتغلين من التسكينات النشطة.
-   - التنفيذ من RC1O (الإسناد الفعلي وحالات الاستمارات).
-   - التحديد والتطبيق الجماعي.
-   - الحفظ داخل lines + التقسيم إلى داخلي/خارجي/استعانة.
-   - لا يتم اعتبار أي مبلغ "مدفوع" قبل إصدار الكشف ثم تأكيد الصرف.
-   ============================================================ */
-
 const financeQ2D={
   batchId:null,
   candidates:[],
@@ -16656,17 +15998,6 @@ function financeQ2DCalculate(row,method,primary,secondary){
     amount=pct*rate;
   }
 
-  /*
-    RC1Q2-D1.1
-    قيمة الدفعة هنا = استحقاق جديد يضاف للفرد، وليست اختيار مبلغ
-    من المتبقي السابق. لذلك لا نقيدها بقيمة المتبقي الحالي.
-
-    مثال:
-    المتبقي السابق = 1,250
-    استحقاق الدفعة الجديدة = 3,000
-    المتبقي المتوقع بعد إصدار الدفعة = 4,250
-    ثم عند إثبات الدفع يُخصم المدفوع فعليًا فقط.
-  */
   return Math.max(0,Number(amount.toFixed(2)));
 }
 
@@ -16751,10 +16082,6 @@ async function financeQ2DLoadCandidates(batch){
 
       const old=rateMap.get(key);
 
-      /*
-        لسعر حساب الإطار/الإنتاج نفضّل سعر الوحدة.
-        عند عدم وجوده نستخدم السعر الفعال المتاح كقيمة افتراضية قابلة للتعديل.
-      */
       if(!old || (r.rate_type==='per_unit' && old.rate_type!=='per_unit')){
         rateMap.set(key,r);
       }
@@ -17644,9 +16971,6 @@ async function financeQ2DSaveBatch(batchId){
     for(const r of selected){
       financeQ2DReadRow(r.individual_id);
 
-      /*
-        لو لم يطبق المستخدم قاعدة جماعية، نحسب من طريقة الصف وقيمته الحالية.
-      */
       const valueEl=document.getElementById(`q2d_value_${r.individual_id}`);
       const methodEl=document.getElementById(`q2d_method_${r.individual_id}`);
 
@@ -17968,7 +17292,6 @@ function financeQ2RenderSheetCard(sheet,batchId){
   `;
 }
 
-/* Training reward -> Payment Batch bridge */
 async function syncOneTrainingPaymentBatchQ1_2(eventId,silent=false){
   if(!v11CanManageFinance()){
     if(!silent) showToast('غير مصرح لك بإدارة الدفعات المالية','danger');
@@ -18118,6 +17441,7 @@ async function syncTrainingPaymentBatchesQ1_2(projectId){
 }
 
 async function renderProjectFinanceV11Tab(proj){
+  if(!c1202CanFinance())return c1202Deny('المالية والتسوية');
   const body=document.getElementById('projectBody');
 
   if(!['admin','project_manager','region','followup'].includes(profile?.role)){
@@ -18479,13 +17803,6 @@ function renderFinanceQ1Overview(proj,pos,batches,rates,totals){
     </div>
   `;
 }
-
-
-/* ============================================================
-   RC1Q2-G — دورة حياة الدفعة
-   أرشفة / إلغاء / حذف قبل الدفع.
-   بعد الدفع: عكس/إعادة فتح بواسطة admin فقط.
-   ============================================================ */
 
 function financeQ2GIsAdmin(){
   return profile?.role==='admin';
@@ -19224,9 +18541,6 @@ async function executeAdminRollbackBatchQ2G(batchId){
     const reverseIndividuals=[...new Set([...reversePayments,...reverseAdvances].map(x=>x.individual_id).filter(Boolean))];
     const reversedAmount=[...reversePayments,...reverseAdvances].reduce((z,x)=>z+Number(x.amount||0),0);
 
-    /*
-      Audit قبل حذف سجلات الدفع.
-    */
     await financeQ2GLog(
       b,
       'admin_rollback_after_payment',
@@ -19406,11 +18720,6 @@ async function executeAdminRollbackBatchQ2G(batchId){
   }
 }
 
-
-/* ============================================================
-   RC1Q2-H — سجل الدفعة / Audit Trail
-   ============================================================ */
-
 const financeQ2H={
   currentRows:[],
   currentTitle:'سجل الدفعة'
@@ -19545,10 +18854,6 @@ async function financeQ2HLoadBatchHistory(batchId){
     };
   });
 
-  /*
-    صف إنشاء افتراضي لضمان أن بداية دورة حياة الدفعة ظاهرة
-    حتى للدفعات التي أنشئت قبل تركيب جدول السجل.
-  */
   if(batch.created_at){
     enriched.push({
       id:`created-${batch.id}`,
@@ -19610,10 +18915,7 @@ async function financeQ2HSafeLog(
     );
 
   }catch(err){
-    /*
-      تسجيل السجل لا يجب أن يحول إجراء مالي ناجح إلى رسالة فشل كاذبة.
-      يظهر التحذير في console حتى تتم مراجعته.
-    */
+
     console.warn('Batch audit log warning:',err);
   }
 }
@@ -19904,7 +19206,7 @@ async function openProjectBatchHistoryQ2H(projectId){
   }
 }
 
-function financeQ2HExportCurrentExcel(){
+function financeQ2HExportCurrentExcel__impl(){
   try{
     if(typeof XLSX==='undefined'){
       throw new Error('مكتبة Excel غير محملة');
@@ -19951,6 +19253,7 @@ function financeQ2HExportCurrentExcel(){
     showToast(err.message,'danger');
   }
 }
+function financeQ2HExportCurrentExcel(...a){return ensureXLSXV11().then(()=>financeQ2HExportCurrentExcel__impl(...a)).catch(e=>console.error(e));}
 
 function financeQ2GBatchActionsHtml(b){
   const historyButton=`
@@ -20353,10 +19656,6 @@ async function financeQ2FCreateFinalSettlementBatch(projectId){
   try{
     const ids=selected.map(x=>x.individual_id);
 
-    /*
-      منع إدخال نفس الشخص في أكثر من دفعة تسوية نهائية
-      ما زالت مفتوحة ولم تُلغ أو تُدفع بالكامل.
-    */
     const {data:existingLines,error:lineErr}=await sb
       .from('project_payment_batch_lines_v11')
       .select('individual_id,batch_id')
@@ -20533,10 +19832,6 @@ async function financeQ2FCreateFinalSettlementBatch(projectId){
       }
     );
 
-    /*
-      تثبيت حالة Snapshots المختارة كمراجعة.
-      الاعتماد النهائي سيحدث مع إصدار الدفعة.
-    */
     const settlementIds=selected
       .map(x=>x._settlement?.id)
       .filter(Boolean);
@@ -20567,7 +19862,6 @@ async function financeQ2FCreateFinalSettlementBatch(projectId){
     showToast(err.message||'تعذر إنشاء دفعة التسوية النهائية','danger');
   }
 }
-
 
 async function financeQ2FLoadFinalBatchLines(batchId){
   const {data:lines,error}=await sb
@@ -20759,11 +20053,6 @@ function financeQ2PaymentCategory(batch){
   if(batch?.batch_type==='fieldwork') return 'fieldwork';
   if(batch?.batch_type==='administrative_reward') return 'bonus_achievement';
 
-  /*
-    التسويات والدفعات تحت الحساب لا توجد لها فئة legacy مستقلة
-    في جدول payments، لذلك تحفظ تحت "other" مع بقاء الربط الكامل
-    بالدفعة والكشف والسطر.
-  */
   return 'other';
 }
 
@@ -21444,12 +20733,6 @@ async function deletePaymentBatchQ1(batchId){
   return openBatchLifecycleQ2G(batchId,'delete');
 }
 
-
-
-/* ============================================================
-   RC1Q2-E — المكافآت الإدارية داخل الدفعة
-   ============================================================ */
-
 const financeQ2E={
   batchId:null,
   rows:[],
@@ -22101,10 +21384,6 @@ async function deleteFinanceAdminPersonQ2E(batchId,lineId,name){
     showToast(err.message,'danger');
   }
 }
-
-/* ============================================================
-   RC1Q2-D2 — مراجعة وإصدار كشوف دفعات الميدان
-   ============================================================ */
 
 function financeQ2D2CanIssue(batch){
   return !!batch
@@ -22759,8 +22038,8 @@ async function financeQ2D2PrintDocument(documentId){
   }
 }
 
-
 async function financeQ2D2ExportDocumentExcel(documentId){
+  await ensureXLSXV11();
   try{
     if(typeof XLSX==='undefined'){
       throw new Error('مكتبة Excel غير محملة');
@@ -22842,14 +22121,12 @@ async function financeQ2D2ExportDocumentExcel(documentId){
 
     const ws=XLSX.utils.aoa_to_sheet(rows);
 
-    // دمج عناوين أعلى الكشف.
     ws['!merges']=[
       XLSX.utils.decode_range('A1:G1'),
       XLSX.utils.decode_range('A2:G2'),
       XLSX.utils.decode_range('A3:G3')
     ];
 
-    // عرض أعمدة مناسب مع الحفاظ على الأكواد والرقم القومي كنصوص.
     ws['!cols']=[
       {wch:6},
       {wch:34},
@@ -22860,11 +22137,11 @@ async function financeQ2D2ExportDocumentExcel(documentId){
       {wch:16}
     ];
 
-    const headerRow=12; // الصف 12 في Excel، zero-based index = 11
+    const headerRow=12; 
+
     const dataStart=headerRow+1;
     const dataEnd=dataStart+(lines||[]).length-1;
 
-    // إجبار أعمدة الأكواد والرقم القومي على نص لمنع فقد الأصفار البادئة.
     for(let r=dataStart;r<=dataEnd;r++){
       for(const c of [3,4,5]){
         const addr=XLSX.utils.encode_cell({r,c});
@@ -22875,7 +22152,6 @@ async function financeQ2D2ExportDocumentExcel(documentId){
       }
     }
 
-    // المبالغ أرقام فعلية داخل Excel.
     for(let r=dataStart;r<=dataEnd;r++){
       const addr=XLSX.utils.encode_cell({r,c:6});
       if(ws[addr]){
@@ -23331,8 +22607,6 @@ async function snapshotSettlementV11(projectId){
   try{const n=await callRPC('snapshot_project_settlements_v11',{p_project_id:projectId});showToast(`✅ تم إعداد تسوية ${n||0} مشتغل`,'success');renderProjectFinanceV11Tab(state.activeProjectCache);}catch(e){showToast(e.message,'danger');}
 }
 
-/* ---------------- Reports — RC1Q2-J ---------------- */
-
 function financeReportJNumber(v){
   const n=Number(v);
   return Number.isFinite(n)?n:0;
@@ -23563,9 +22837,6 @@ async function financeReportJLoad(projectId){
     documentLines,batchHistory,individuals
   };
 }
-
-
-/* ---------------- Finance Integrity Audit — RC1Q2-K ---------------- */
 
 const financeAuditK={
   rows:[],
@@ -23947,10 +23218,6 @@ function financeAuditKBuild(d){
     }
   }
 
-  /*
-    تدريب: المستند الصادر يجب أن يكون له مقابل Ledger تدريب فعلي.
-    وجود فرق هنا مهم قبل التسوية النهائية لأن view الموقف المالي يعتمد Ledger.
-  */
   const issuedTrainingDocIds=new Set(
     (d.documents||[])
       .filter(x=>x.document_type==='training_reward' && x.status==='issued')
@@ -24161,7 +23428,7 @@ async function openFinanceIntegrityAuditV11(projectId){
   }
 }
 
-function exportFinanceIntegrityAuditV11(){
+function exportFinanceIntegrityAuditV11__impl(){
   if(typeof XLSX==='undefined'){
     return showToast('مكتبة Excel غير محملة','danger');
   }
@@ -24181,8 +23448,11 @@ function exportFinanceIntegrityAuditV11(){
     `فحص_سلامة_المالية_${code}.xlsx`
   );
 }
+function exportFinanceIntegrityAuditV11(...a){return ensureXLSXV11().then(()=>exportFinanceIntegrityAuditV11__impl(...a)).catch(e=>console.error(e));}
 
 async function exportComprehensiveFinancialReportV11(projectId){
+  await ensureXLSXV11();
+  if(!c1202CanFinance())return c1202Deny('تصدير التقرير المالي');
   if(typeof XLSX==='undefined'){
     return showToast('مكتبة Excel غير محملة','danger');
   }
@@ -24675,6 +23945,7 @@ async function exportComprehensiveFinancialReportV11(projectId){
 }
 
 async function renderProjectReportsV11Tab(proj){
+  if(c1202Restricted())return await c1202RenderExecutionOnlyReport(proj);
   const body=document.getElementById('projectBody');
   try{
     const [exR,qR,posR,trR,factorR,batchR]=await Promise.all([
@@ -24802,9 +24073,8 @@ async function renderProjectReportsV11Tab(proj){
   }catch(err){showError('projectBody',err.message);}
 }
 
-
-
 async function exportFinancialPositionV11(projectId){
+  if(!c1202CanFinance())return c1202Deny('تصدير الموقف المالي');
   const {data,error}=await sb.from('v_project_financial_position_v11')
     .select('*').eq('project_id',projectId).order('full_name');
   if(error)return showToast(error.message,'danger');
@@ -24820,8 +24090,8 @@ async function exportFinancialPositionV11(projectId){
   }))}],`الموقف_المالي_${state.activeProjectCache?.code||''}.xlsx`);
 }
 
-/* ---------------- Project event log ---------------- */
 async function renderProjectLogV11Tab(proj){
+  if(!c1202CanProjectLog())return c1202Deny('سجل المشروع');
   const body=document.getElementById('projectBody');
   try{
     const {data}=await sb.from('project_events').select('*, profiles(full_name)').eq('project_id',proj.id).order('created_at',{ascending:false}).limit(250);
@@ -24834,18 +24104,6 @@ async function renderProjectLogV11Tab(proj){
     `;
   }catch(err){showError('projectBody',err.message);}
 }
-
-
-
-/* ===================================================================
- * V11.0-RC1N — FRAME + BULK ASSIGNMENT UI
- * -------------------------------------------------------------------
- * Backend authority:
- *   - scoped reads: get_project_frame_v11
- *   - import: staged/chunked RPC workflow
- *   - assignment: bulk RPCs
- * Direct work_units mutation is intentionally not used by this V11 tab.
- * =================================================================== */
 
 const frameV11 = {
   rows: [],
@@ -24971,7 +24229,9 @@ function frameFilterParamsV11(proj, offset=0, limit=frameV11.limit){
   return {
     p_project_id: proj.id,
     p_cycle_id: frameCycleIdV11(proj),
-    p_governorate_id: f.governorateId ? Number(f.governorateId) : null,
+    p_governorate_id: c1202Restricted()
+      ? (c1202AllowGov(f.governorateId)?Number(f.governorateId):null)
+      : (f.governorateId?Number(f.governorateId):null),
     p_center_code: f.centerCode || null,
     p_vel_code: f.velCode || null,
     p_enumerator_area_code: f.areaCode || null,
@@ -25021,8 +24281,115 @@ function frameStatusBadgeV11(v){
   return '<span class="badge">غير مسند</span>';
 }
 
-/* Override the old project "units" renderer.
-   Project tab "operations" already routes to renderProjectUnitsTab(). */
+async function c12027FrameMetricsForGov(proj, govId){
+  if(!Number.isInteger(Number(govId)) || !c1202AllowGov(govId))
+    throw new Error('المحافظة غير مصرح بها');
+  const key={pid:proj.id,cycle:frameCycleIdV11(proj),gov:Number(govId)};
+  return c12023Cached('c12027-frame-balances',key,async()=>{
+    const pageSize=400;
+    const base={
+      p_project_id:proj.id,p_cycle_id:frameCycleIdV11(proj),
+      p_governorate_id:Number(govId),
+      p_center_code:null,p_vel_code:null,p_enumerator_area_code:null,
+      p_assignment_state:'all',p_search:null
+    };
+    let offset=0,expected=null,assigned=0,inProgress=0,completed=0;
+    const seen=new Set();
+    for(let page=0;page<250;page++){
+
+      const data=await c12023ReadRpc('get_project_frame_v11',{
+        ...base,p_offset:offset,p_limit:pageSize
+      });
+      if(!Array.isArray(data))throw new Error('استجابة سجل الإطار غير متوقعة');
+      if(expected===null){
+        if(!data.length)expected=0;
+        else {
+          const n=Number(data[0].total_count);
+          if(!Number.isSafeInteger(n)||n<0)
+            throw new Error('إجمالي السجلات غير متاح من دالة الإطار');
+          expected=n;
+        }
+      }
+      if(!data.length){
+        if(offset<expected)throw new Error('انتهت صفحات الإطار قبل استكمال العدد');
+        break;
+      }
+      for(const r of data){
+        const rowGov=c1202GetGovId(r);
+        if(rowGov!==Number(govId))
+          throw new Error('استجابة سجل الإطار لا تطابق المحافظة المختارة');
+        const id=String(r.work_unit_id||'');
+        if(!id)throw new Error('سجل إطار بلا معرف؛ تعذر إجراء عدّ موثوق');
+        if(seen.has(id))continue;
+        seen.add(id);
+        if(r.current_assignment_id)assigned++;
+        if(r.unit_status==='in_progress')inProgress++;
+        if(r.unit_status==='completed')completed++;
+      }
+      offset+=data.length;
+      if(offset>=expected)break;
+    }
+    if(seen.size!==expected)
+      throw new Error('لم تكتمل قراءة الإطار ('+seen.size+' من '+expected+')؛ لم تُعرض أرقام غير مؤكدة');
+    if(assigned>expected)throw new Error('عدد الإسنادات يتجاوز عدد وحدات الإطار');
+    return {total:expected,assigned,unassigned:expected-assigned,inProgress,completed,governorates:1};
+  },45000);
+}
+async function c12027FrameScopeMetrics(proj,govId=null){
+  let govIds;
+  if(govId!==null&&govId!==undefined&&String(govId)!==''){
+    govIds=[Number(govId)];
+  }else if(c1202Restricted()){
+    govIds=[...(state.c1202GovIds||new Set())].map(Number).sort(c1202GovOrder);
+  }else{
+    throw new Error('حدد المحافظة للحساب المحدد النطاق');
+  }
+  if(!govIds.length)throw new Error('لا توجد محافظات تابعة للمشروع في نطاق هذا الحساب');
+  const sums={total:0,assigned:0,unassigned:0,inProgress:0,completed:0,governorates:0};
+
+  for(const id of govIds){
+    const v=await c12027FrameMetricsForGov(proj,id);
+    for(const field of Object.keys(sums))sums[field]+=v[field];
+  }
+  return sums;
+}
+function c12027ShowFrameCounters(proj, govId){
+  const ids={total:'c12027FrameTotal',assigned:'c12027FrameAssigned',
+    unassigned:'c12027FrameUnassigned',inProgress:'c12027FrameInProgress',
+    completed:'c12027FrameCompleted'};
+  const pid=proj.id, gid=Number(govId);
+  const active=()=>state.tab==='project-detail'&&state.projectTab==='operations'&&
+    state.activeProjectId===pid&&Number(frameV11.filters.governorateId)===gid;
+  c12027FrameScopeMetrics(proj,gid).then(res=>{
+    if(!active())return;
+    for(const [key,id] of Object.entries(ids)){
+      const el=document.getElementById(id);
+      if(el)el.textContent=fmtNum(res[key]);
+    }
+    const note=document.getElementById('c12027FrameNote');
+    if(note)note.textContent='أعداد فعلية لمحافظة '+(govName(gid)||gid)+
+      ' وفق سجل الإطار؛ بدون فلاتر البحث، ولا تشمل محافظات أخرى.';
+  }).catch(err=>{
+    if(!active())return;
+    for(const id of Object.values(ids)){
+      const el=document.getElementById(id);if(el)el.textContent='—';
+    }
+    const note=document.getElementById('c12027FrameNote');
+    if(note)note.textContent='تعذر حساب مؤشرات الإطار بدقة: '+err.message;
+    console.warn('[C1.20.2.7] frame counts',err);
+  });
+}
+function c12027InvalidateFrameCache(){
+  for(const key of c12023ReadCache.keys()){
+    if(key.includes('c12027-frame-balances')||key.includes('rpc:get_project_frame_v11'))
+      c12023ReadCache.delete(key);
+  }
+}
+function c12027RefreshFrame(){
+  c12027InvalidateFrameCache();
+  return renderProjectUnitsTab(state.activeProjectCache);
+}
+
 async function renderProjectUnitsTab(proj){
   const body = document.getElementById('projectBody');
 
@@ -25044,7 +24411,7 @@ async function renderProjectUnitsTab(proj){
 
   try{
     const [statsRows, canManage] = await Promise.all([
-      callRPC('get_project_frame_stats_v11',{
+      c1202Restricted()?Promise.resolve(null):callRPC('get_project_frame_stats_v11',{
         p_project_id: proj.id,
         p_cycle_id: frameCycleIdV11(proj)
       }),
@@ -25057,7 +24424,16 @@ async function renderProjectUnitsTab(proj){
     frameV11.canAssign =
       !!canManage || ['admin','project_manager','region','office'].includes(profile?.role);
 
-    const stats = Array.isArray(statsRows) ? (statsRows[0] || {}) : (statsRows || {});
+    const stats = c1202Restricted() ? null
+      : (Array.isArray(statsRows) ? (statsRows[0] || {}) : (statsRows || {}));
+    if(c1202Restricted() && state.c1202GovIds?.size &&
+      !c1202AllowGov(frameV11.filters.governorateId)){
+      frameV11.filters.governorateId=String([...state.c1202GovIds].sort(c1202GovOrder)[0]);
+    }
+    const scopedFrameGov=c1202Restricted()?Number(frameV11.filters.governorateId):null;
+    const counter=(key,value)=>c1202Restricted()
+      ? '<span id="c12027Frame'+key+'" title="جار حساب العدد من سجل الإطار">…</span>'
+      : fmtNum(value||0);
 
     body.innerHTML = `
       <div class="v11-section-title">
@@ -25073,12 +24449,12 @@ async function renderProjectUnitsTab(proj){
                     onclick="openFrameImportModalV11('${proj.id}')">
               📥 استيراد الإطار
             </button>` : ''}
-          <button class="btn btn-outline btn-sm"
+          ${!c1202Restricted()?`<button class="btn btn-outline btn-sm"
                   onclick="exportFrameExcelV11('${proj.id}')">
             ⬇ تصدير Excel
-          </button>
+          </button>`:''}
           <button class="btn btn-outline btn-sm"
-                  onclick="renderProjectUnitsTab(state.activeProjectCache)">
+                  onclick="c12027RefreshFrame()">
             🔄 تحديث
           </button>
         </div>
@@ -25086,34 +24462,35 @@ async function renderProjectUnitsTab(proj){
 
       <div class="kpi-grid">
         <div class="kpi-card">
-          <div class="num nums">${fmtNum(stats.total_count || 0)}</div>
+          <div class="num nums">${counter('Total',stats?.total_count)}</div>
           <div class="lbl">إجمالي الإطار</div>
         </div>
         <div class="kpi-card success">
-          <div class="num nums">${fmtNum(stats.assigned_count || 0)}</div>
+          <div class="num nums">${counter('Assigned',stats?.assigned_count)}</div>
           <div class="lbl">مسند</div>
         </div>
         <div class="kpi-card">
-          <div class="num nums">${fmtNum(stats.unassigned_count || 0)}</div>
+          <div class="num nums">${counter('Unassigned',stats?.unassigned_count)}</div>
           <div class="lbl">غير مسند</div>
         </div>
         <div class="kpi-card amber">
-          <div class="num nums">${fmtNum(stats.in_progress_count || 0)}</div>
+          <div class="num nums">${counter('InProgress',stats?.in_progress_count)}</div>
           <div class="lbl">جاري التنفيذ</div>
         </div>
         <div class="kpi-card success">
-          <div class="num nums">${fmtNum(stats.completed_count || 0)}</div>
+          <div class="num nums">${counter('Completed',stats?.completed_count)}</div>
           <div class="lbl">مكتمل</div>
         </div>
       </div>
 
+      ${c1202Restricted()?'<div class="subtle" id="c12027FrameNote" style="margin:8px 0 15px">جار احتساب المؤشرات من وحدات الإطار في المحافظة المختارة…</div>':''}
       <div class="card">
         <div class="grid cols-3">
           <div class="field">
             <label>المحافظة</label>
-            <select id="fr_gov" class="input" onchange="reloadFrameV11(true)">
-              <option value="">كل المحافظات المتاحة</option>
-              ${govList.map(g=>`
+            <select id="fr_gov" class="input" onchange="frameGovChangedV11()">
+              ${!c1202Restricted()?'<option value="">كل المحافظات المتاحة</option>':''}
+              ${govList.filter(g=>c1202AllowGov(g.id)).sort((a,b)=>c1202GovOrder(a.id,b.id)).map(g=>`
                 <option value="${g.id}"
                   ${String(frameV11.filters.governorateId)===String(g.id)?'selected':''}>
                   ${esc(String(g.code).padStart(2,'0'))} — ${esc(g.name)}
@@ -25122,10 +24499,10 @@ async function renderProjectUnitsTab(proj){
           </div>
           <div class="field">
             <label>كود القسم/المركز</label>
-            <input id="fr_center" class="input nums"
-                   maxlength="4"
-                   value="${esc(frameV11.filters.centerCode)}"
-                   placeholder="مثال 0133">
+            <select id="fr_center" class="input nums" onchange="reloadFrameV11(true)" ${frameV11.filters.governorateId?'':'disabled'}>
+              <option value="">${frameV11.filters.governorateId?'جارِ تحميل الأقسام/المراكز…':'اختر المحافظة أولًا'}</option>
+              ${frameV11.filters.centerCode?`<option value="${esc(frameV11.filters.centerCode)}" selected>${esc(frameV11.filters.centerCode)}</option>`:''}
+            </select>
           </div>
           <div class="field">
             <label>كود الشياخة/القرية</label>
@@ -25187,10 +24564,84 @@ async function renderProjectUnitsTab(proj){
 
     frameV11.offset = 0;
     resetFrameSelectionV11();
+    if(c1202Restricted() && scopedFrameGov && c1202AllowGov(scopedFrameGov))
+      c12027ShowFrameCounters(proj,scopedFrameGov);
+    populateFrameCentersV11();
     await loadFramePageV11(proj);
   }catch(err){
     showError('projectBody',err.message);
   }
+}
+
+
+/* C1.22.1: section/center filter is a dropdown fed by the selected governorate (like the governorate filter) */
+const frameCentersCacheV11 = {};
+
+async function loadFrameCentersV11(govId){
+  if(frameCentersCacheV11[govId]) return frameCentersCacheV11[govId];
+  const { data, error } = await fetchAllPagedV11(
+    (o)=>sb.from('districts').select('*',o).eq('governorate_id', govId).order('id')
+  );
+  if(error) throw error;
+  const pick=(r,keys)=>{
+    for(const k of keys){ if(r[k]!=null && String(r[k]).trim()!=='') return String(r[k]).trim(); }
+    return '';
+  };
+  const map=new Map();
+  (data||[]).forEach(r=>{
+    let code=frameNormalizeSmallCodeV11(pick(r,['center_code','centerCode']),4);
+    if(!code){
+      const v=pick(r,['vel_code','velCode']);
+      if(/^\d{6}/.test(v)) code=v.slice(0,4);
+    }
+    if(!code) return;
+    const name=pick(r,['center','center_name']);
+    if(!map.has(code) || (!map.get(code) && name)) map.set(code,name);
+  });
+  const list=[...map].sort((a,b)=>a[0].localeCompare(b[0])).map(([code,name])=>({code,name}));
+  if(list.length) frameCentersCacheV11[govId]=list;
+  return list;
+}
+
+async function populateFrameCentersV11(){
+  const sel=document.getElementById('fr_center');
+  if(!sel || sel.tagName!=='SELECT') return;
+  const govEl=document.getElementById('fr_gov');
+  const gov=govEl ? govEl.value : '';
+  const cur=frameV11.filters.centerCode || '';
+  if(!gov){
+    sel.innerHTML='<option value="">اختر المحافظة أولًا</option>';
+    sel.disabled=true;
+    return;
+  }
+  sel.disabled=true;
+  let list=null;
+  try{ list=await loadFrameCentersV11(gov); }catch(err){ console.warn('Frame centers unavailable:',err); }
+  const now=document.getElementById('fr_center');
+  if(!now || document.getElementById('fr_gov')?.value!==gov) return;
+  if(!list || !list.length){
+    /* directory unavailable: keep the screen usable with a plain code field */
+    now.outerHTML='<input id="fr_center" class="input nums" maxlength="4" value="'+esc(cur)+'" placeholder="مثال 0133">';
+    return;
+  }
+  const opts=['<option value="">كل الأقسام/المراكز</option>'].concat(
+    list.map(c=>`<option value="${esc(c.code)}">${esc(c.code)}${c.name?' — '+esc(c.name):''}</option>`)
+  );
+  if(cur && !list.some(c=>c.code===cur)) opts.push(`<option value="${esc(cur)}">${esc(cur)}</option>`);
+  now.innerHTML=opts.join('');
+  now.value=cur;
+  now.disabled=false;
+}
+
+function frameGovChangedV11(){
+  frameV11.filters.centerCode='';
+  const sel=document.getElementById('fr_center');
+  if(sel){
+    if(sel.tagName==='SELECT') sel.innerHTML='<option value="">جارِ تحميل الأقسام/المراكز…</option>';
+    sel.value='';
+  }
+  populateFrameCentersV11();
+  reloadFrameV11(true);
 }
 
 async function reloadFrameV11(resetPage=false){
@@ -25199,6 +24650,14 @@ async function reloadFrameV11(resetPage=false){
   readFrameFiltersV11();
   if(resetPage) frameV11.offset = 0;
   resetFrameSelectionV11();
+  if(c1202Restricted()){
+    for(const id of ['c12027FrameTotal','c12027FrameAssigned',
+      'c12027FrameUnassigned','c12027FrameInProgress','c12027FrameCompleted']){
+      const el=document.getElementById(id);if(el)el.textContent='…';
+    }
+    const govId=Number(frameV11.filters.governorateId);
+    if(govId&&c1202AllowGov(govId)) c12027ShowFrameCounters(proj,govId);
+  }
   await loadFramePageV11(proj);
 }
 
@@ -25218,6 +24677,10 @@ async function clearFrameFiltersV11(){
 
 async function loadFramePageV11(proj){
   const box = document.getElementById('frameTableV11');
+  if(c1202Restricted() && (!frameV11.filters.governorateId || !c1202AllowGov(frameV11.filters.governorateId))){
+    if(box)box.innerHTML='<div class="empty-state">اختر محافظة ضمن نطاقك أولًا</div>';
+    return;
+  }
   if(!box) return;
 
   box.innerHTML = `
@@ -25389,8 +24852,6 @@ async function framePrevPageV11(){
   await loadFramePageV11(state.activeProjectCache);
 }
 
-/* -------------------- Excel import -------------------- */
-
 function openFrameImportModalV11(projectId){
   if(!frameV11.canManageImport){
     return showToast('استيراد الإطار غير متاح لهذه الصلاحية','danger');
@@ -25413,7 +24874,7 @@ function openFrameImportModalV11(projectId){
         جدول <span class="nums">districts</span>.
       </p>
       <div class="subtle nums" style="margin-bottom:8px;">
-        Frame Engine: V11.0-C1.19 · بصمة الملف / استكمال الرفع / مقارنة الإضافات والتعديلات قبل الاعتماد
+        Frame Engine: V11.0-C1.22.2 · بصمة الملف / استكمال الرفع / مقارنة الإضافات والتعديلات قبل الاعتماد
       </div>
 
       <div class="notice-box" style="margin-bottom:14px;">
@@ -25446,6 +24907,8 @@ function openFrameImportModalV11(projectId){
 }
 
 async function downloadFrameTemplateV11(){
+  await ensureXLSXV11();
+  if(c1202Restricted())return c1202Deny('تصدير غير مصرح به');
   if(typeof XLSX==='undefined') return showToast('مكتبة Excel لم تُحمّل','danger');
 
   try{
@@ -25537,7 +25000,6 @@ async function downloadFrameTemplateV11(){
   showToast(`✅ تم إنشاء النموذج ومعه ${fmtNum(districtsCacheRowCount)} سجل من الدليل الإداري`,'success');
 }
 
-// C1.17: server-side manifest and resumable, file-specific staging checkpoint.
 const frameImportC116 = { busy:false, chunkSize:500, storagePrefix:'v11-frame-import-c117:' };
 function frameImportC116Key(projectId,cycleId,userId,digest){
   return frameImportC116.storagePrefix + [SUPABASE_URL,projectId,cycleId||'none',userId,digest].join(':');
@@ -25563,6 +25025,7 @@ function frameImportC116Progress(node,current,total,extra=''){
     <div class="nums subtle">${fmtNum(current)} / ${fmtNum(total)} (${pct}%)</div>`;
 }
 async function handleFrameFileV11(file,projectId){
+  await ensureXLSXV11();
   if(!file)return;
   if(frameImportC116.busy)return showToast('هناك عملية استيراد جارية بالفعل. انتظر حتى تنتهي.','warn');
   if(typeof XLSX==='undefined')return showToast('مكتبة Excel لم تُحمّل','danger');
@@ -25593,8 +25056,7 @@ async function handleFrameFileV11(file,projectId){
     const rows=rawRows.map(mapFrameExcelRowV11);
     frameV11.importFileName=file.name;
     frameV11.c116CheckpointKey=key;
-    // C1.17: server-side manifest, deduplication and authoritative resume cursor.
-    // This RPC can return an existing active/committed batch for the same file hash.
+
     stage='register-file-manifest';
     node.innerHTML='<div class="subtle"><span class="spinner"></span> جارِ التحقق من بصمة الملف وعدد صفوفه على الخادم...</div>';
     const batchId=await callRPC('create_frame_import_batch_c117',{
@@ -25651,7 +25113,7 @@ async function handleFrameFileV11(file,projectId){
       });
       record.nextOffset=i+chunk.length;
       frameImportC116Save(key,record);
-      // Yield to the browser to keep the UI responsive for large imports.
+
       await new Promise(resolve=>setTimeout(resolve,0));
     }
     stage='verify-summary';
@@ -25765,7 +25227,6 @@ async function commitFrameImportV11(batchId,projectId,confirmed=false){
   }
 }
 
-/* ========== C1.18: server-side preview inspired by cartographic-survey review UX ========== */
 const frameReviewC118 = {
   batchId:null, projectId:null, filter:'all', offset:0, limit:30,
   summary:null, page:null, fetching:false, sequence:0
@@ -25871,7 +25332,7 @@ function frameReviewRenderC118(root){
       <div class="c118-titlebar">
         <div><h3 style="margin:0 0 5px">🔍 مقارنة Excel بالإطار الحالي</h3>
           <div class="subtle">معاينة حقيقية من قاعدة البيانات · لا تُغيّر المعاينة أي سجل</div></div>
-        <span class="c118-pill">C1.20 · مراجعة قبل الحفظ</span>
+        <span class="c118-pill">مراجعة قبل الحفظ</span>
       </div>
       <div class="c118-stat-grid">
         ${counts.map(c=>`<button type="button" class="c118-stat ${c[3]} ${filter===c[0]?'c118-selected':''}"
@@ -25886,7 +25347,7 @@ function frameReviewRenderC118(root){
       </div>
       ${!projectActive?`<div class="notice-box danger" style="margin:9px 0">المشروع حالته ${frameReviewSafeC118(s.project_status)}؛ الاعتماد ممنوع للمشروعات غير النشطة.</div>`:''}
       <div class="c118-toolbar"><b>السجلات: ${fmtNum(start)}–${fmtNum(last)} من ${fmtNum(total)}</b>
-        <button type="button" class="btn btn-outline btn-sm" onclick="frameReviewExportPageC118()">⬇ تصدير الصفحة</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="frameReviewExportPageC118()" ${c1202Restricted()?'style="display:none" disabled':''}>⬇ تصدير الصفحة</button>
       </div>
       <div class="c118-items">
         ${items.length?items.map(row=>{
@@ -25923,7 +25384,8 @@ function frameReviewRenderC118(root){
     </section>`;
 }
 
-function frameReviewExportPageC118(){
+function frameReviewExportPageC118__impl(){
+  if(c1202Restricted())return c1202Deny('تصدير معاينة الإطار');
   const p=frameReviewC118.page;
   if(!p||!Array.isArray(p.items)||!p.items.length)return showToast('لا توجد سجلات في هذه الصفحة','warn');
   if(typeof XLSX==='undefined')return showToast('مكتبة Excel غير متاحة','danger');
@@ -25940,12 +25402,13 @@ function frameReviewExportPageC118(){
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(flat),'معاينة الفروقات');
   XLSX.writeFile(wb,`مقارنة_إطار_العمل_C118_صفحة_${Math.floor(frameReviewC118.offset/frameReviewC118.limit)+1}.xlsx`);
 }
+function frameReviewExportPageC118(...a){return ensureXLSXV11().then(()=>frameReviewExportPageC118__impl(...a)).catch(e=>console.error(e));}
 
 async function frameReviewCommitC118(){
   const s=frameReviewC118.summary;
   if(!s||s.project_status!=='active')return showToast('لا يجوز اعتماد الإطار لمشروع غير نشط','danger');
   if(frameImportC116.busy)return showToast('انتظر انتهاء رفع الملف أولًا','warn');
-  // Re-query before commit: a preview may become stale as other project changes arrive.
+
   try{
     const fresh=await callRPC('get_frame_import_review_summary_c119',{p_batch_id:frameReviewC118.batchId});
     if(!['validated','uploading'].includes(fresh.status)||fresh.project_status!=='active')throw new Error('تغيرت حالة المشروع أو الدفعة؛ أعد المراجعة');
@@ -25957,9 +25420,8 @@ async function frameReviewCommitC118(){
   }
 }
 
-/* -------------------- Excel export -------------------- */
-
 async function exportFrameExcelV11(projectId){
+  if(c1202Restricted())return c1202Deny('تصدير الإطار');
   try{
     readFrameFiltersV11();
     showToast('جارِ تجهيز ملف الإطار...','info');
@@ -26016,8 +25478,6 @@ async function exportFrameExcelV11(projectId){
     showToast(err.message,'danger');
   }
 }
-
-/* -------------------- Bulk assignment -------------------- */
 
 function selectedFrameRowsV11(){
   const ids=frameV11.selected;
@@ -26152,6 +25612,7 @@ async function submitFrameAssignmentV11(mode,govId){
     closeModal('frameAssignV11Modal');
     resetFrameSelectionV11();
     showToast(`✅ تم إسناد ${n||0} سجل`,'success');
+    c12027InvalidateFrameCache();
     await renderProjectUnitsTab(state.activeProjectCache);
   }catch(err){
     showToast(err.message,'danger');
@@ -26191,6 +25652,7 @@ async function submitFrameUnassignV11(){
     closeModal('frameUnassignV11Modal');
     resetFrameSelectionV11();
     showToast(`✅ تم إلغاء إسناد ${n||0} سجل`,'success');
+    c12027InvalidateFrameCache();
     await renderProjectUnitsTab(state.activeProjectCache);
   }catch(err){
     showToast(err.message,'danger');
@@ -26233,12 +25695,6 @@ async function openFrameHistoryV11(workUnitId){
     showToast(err.message,'danger');
   }
 }
-
-
-
-/* ===================================================================
- * V11.0-RC1O — PER-FORM FIELD EXECUTION STATUS
- * =================================================================== */
 
 const executionRC1O = {
   canManage: false,
@@ -26313,14 +25769,14 @@ async function renderProjectExecutionV11Tab(proj){
       callRPC('can_manage_field_execution_v11',{
         p_project_id:proj.id
       }),
-      callRPC('get_field_execution_researcher_report_v11',{
-        p_project_id:proj.id,
-        p_cycle_id:executionCycleIdRC1O(proj),
-        p_governorate_id:executionRC1O.selectedGovernorateId
-          ? Number(executionRC1O.selectedGovernorateId)
-          : null
+      c1202Restricted()?callRPC('c1202_execution_report',{
+        p_project_id:proj.id,p_cycle_id:executionCycleIdRC1O(proj)
+      }).then(rows=>(rows||[]).filter(r=>!executionRC1O.selectedGovernorateId||Number(r.governorate_id)===Number(executionRC1O.selectedGovernorateId)))
+      :callRPC('get_field_execution_researcher_report_v11',{
+        p_project_id:proj.id,p_cycle_id:executionCycleIdRC1O(proj),
+        p_governorate_id:executionRC1O.selectedGovernorateId?Number(executionRC1O.selectedGovernorateId):null
       }),
-      callRPC('get_project_frame_stats_v11',{
+      c1202Restricted()?Promise.resolve([]):callRPC('get_project_frame_stats_v11',{
         p_project_id:proj.id,
         p_cycle_id:executionCycleIdRC1O(proj)
       }).catch(()=>[])
@@ -26329,9 +25785,9 @@ async function renderProjectExecutionV11Tab(proj){
     executionRC1O.canManage=!!canManage;
     executionRC1O.report=report||[];
 
-    const frameStats=Array.isArray(frameStatsRows)
-      ? (frameStatsRows[0]||{})
-      : (frameStatsRows||{});
+    const frameStats=c1202Restricted()
+      ? {total_count:null,unassigned_count:null}
+      : (Array.isArray(frameStatsRows)?(frameStatsRows[0]||{}):(frameStatsRows||{}));
 
     const target=executionSumRC1O(report,'target_count');
     const full=executionSumRC1O(report,'full_count');
@@ -26371,16 +25827,16 @@ async function renderProjectExecutionV11Tab(proj){
 
       <div class="kpi-grid">
         <div class="kpi-card">
-          <div class="num nums">${fmtNum(frameStats.total_count||0)}</div>
-          <div class="lbl">إجمالي الإطار</div>
+          <div class="num nums" id="c12026FrameTotal">${frameStats.total_count==null?'…':fmtNum(frameStats.total_count)}</div>
+          <div class="lbl">إجمالي الإطار في النطاق</div>
         </div>
         <div class="kpi-card">
           <div class="num nums">${fmtNum(target)}</div>
           <div class="lbl">المستهدف المسند فعليًا</div>
         </div>
         <div class="kpi-card">
-          <div class="num nums">${fmtNum(frameStats.unassigned_count||0)}</div>
-          <div class="lbl">غير مسند</div>
+          <div class="num nums" id="c12026FrameDifference">${frameStats.unassigned_count==null?'…':fmtNum(frameStats.unassigned_count)}</div>
+          <div class="lbl" id="c12026DifferenceLabel">غير مسند للباحثين (محسوب)</div>
         </div>
         <div class="kpi-card success">
           <div class="num nums">${fmtNum(full)}</div>
@@ -26404,6 +25860,7 @@ async function renderProjectExecutionV11Tab(proj){
         </div>
       </div>
 
+      <div id="c12026ExecutionCheck" class="subtle" style="margin:10px 0;line-height:1.7"></div>
       <div class="card">
         <div class="grid cols-3">
           <div class="field">
@@ -26411,7 +25868,7 @@ async function renderProjectExecutionV11Tab(proj){
             <select id="ex_gov_filter" class="input"
                     onchange="executionChangeGovernorateRC1O()">
               <option value="">كل المحافظات المتاحة</option>
-              ${govList.map(g=>`
+              ${govList.filter(g=>c1202AllowGov(g.id)).sort((a,b)=>c1202GovOrder(a.id,b.id)).map(g=>`
                 <option value="${g.id}"
                   ${String(executionRC1O.selectedGovernorateId)===String(g.id)?'selected':''}>
                   ${esc(String(g.code).padStart(2,'0'))} — ${esc(g.name)}
@@ -26459,6 +25916,39 @@ async function renderProjectExecutionV11Tab(proj){
       <div id="executionFormsRC1O"></div>
     `;
 
+    const statusTotal=full+partial+excluded+inProgress+notStarted;
+    const snapProject=proj.id;
+    const snapGov=executionRC1O.selectedGovernorateId?Number(executionRC1O.selectedGovernorateId):null;
+    const isCurrent=()=>state.tab==='project-detail'&&state.projectTab==='execution'&&
+      state.activeProjectId===snapProject&&
+      (executionRC1O.selectedGovernorateId?Number(executionRC1O.selectedGovernorateId):null)===snapGov;
+    const note=document.getElementById('c12026ExecutionCheck');
+    if(note){
+      note.textContent=statusTotal===target
+        ? '✓ حالات التنفيذ متطابقة مع المستهدف المسند ('+fmtNum(target)+'). إجمالي الإطار يشمل الوحدات غير المسندة أيضًا.'
+        : '⚠️ عدم اتساق: مجموع حالات الاستمارات ('+fmtNum(statusTotal)+') يختلف عن المستهدف المسند ('+fmtNum(target)+'). يُرجى مراجعة بيانات الإسناد.';
+    }
+    if(c1202Restricted()){
+      c12027FrameScopeMetrics(proj,snapGov).then(counts=>{
+        if(!isCurrent())return;
+        const t=document.getElementById('c12026FrameTotal');
+        const d=document.getElementById('c12026FrameDifference');
+        const label=document.getElementById('c12026DifferenceLabel');
+        const n=document.getElementById('c12026ExecutionCheck');
+        if(t)t.textContent=fmtNum(counts.total);
+        if(d)d.textContent=fmtNum(counts.unassigned);
+        if(label)label.textContent='غير مسند وفق سجل الإطار';
+        if(n)n.textContent+=' عدد غير المسند مستخرج من سجل الإطار الفعلي ('+
+          fmtNum(counts.governorates)+' محافظة)، وليس من طرح المستهدف.';
+      }).catch(e=>{
+        if(!isCurrent())return;
+        for(const id of ['c12026FrameTotal','c12026FrameDifference']){
+          const el=document.getElementById(id);if(el)el.textContent='—';
+        }
+        const n=document.getElementById('c12026ExecutionCheck');
+        if(n)n.textContent+=' تعذر حساب الإطار: '+e.message;
+      });
+    }
     const st=document.getElementById('ex_status_filter');
     if(st) st.value=executionRC1O.statusFilter||'';
     const sr=document.getElementById('ex_search');
@@ -26481,7 +25971,7 @@ function renderExecutionHierarchyRC1O(rows){
 
   const govMap=new Map();
 
-  for(const r of rows){
+  for(const r of [...rows].sort(c1202SlotOrder)){
     const gKey=String(r.governorate_id);
     if(!govMap.has(gKey)){
       govMap.set(gKey,{
@@ -26903,40 +26393,42 @@ async function openExecutionHistoryRC1O(workUnitId){
   }
 }
 
-/* -------------------- Export -------------------- */
-
 async function collectExecutionFormsForExportRC1O(){
+  if(c1202Restricted()&&!(state.c1202GovIds?.size))throw new Error('لا توجد محافظات مصرح بها للتصدير');
   const proj=state.activeProjectCache;
   const all=[];
   let offset=0;
   const pageSize=1000;
 
+  const targets=c1202Restricted()
+    ? [...state.c1202GovIds].filter(g=>!executionRC1O.selectedGovernorateId||Number(g)===Number(executionRC1O.selectedGovernorateId))
+    : [executionRC1O.selectedGovernorateId?Number(executionRC1O.selectedGovernorateId):null];
+  for(const gid of targets){
+  offset=0;
   while(true){
     const page=await callRPC('get_field_execution_forms_v11',{
       p_project_id:proj.id,
       p_cycle_id:executionCycleIdRC1O(proj),
       p_researcher_assignment_id:null,
-      p_governorate_id:executionRC1O.selectedGovernorateId
-        ? Number(executionRC1O.selectedGovernorateId)
-        : null,
-      p_status:null,
-      p_search:null,
-      p_offset:offset,
-      p_limit:pageSize
+      p_governorate_id:gid,
+      p_status:null,p_search:null,p_offset:offset,p_limit:pageSize
     });
-
-    const rows=page||[];
+    const rows=(page||[]).filter(r=>!c1202Restricted()||(
+      (r.governorate_id!=null&&Number(r.governorate_id)===Number(gid))||
+      (r.governorate_id==null&&govList.some(g=>Number(g.id)===Number(gid)&&String(g.code)===String(r.governorate_code)))
+    ));
     all.push(...rows);
 
-    if(rows.length<pageSize) break;
-    offset+=rows.length;
-
+    if((page||[]).length<pageSize) break;
+    offset+=(page||[]).length;
     if(offset>500000){
       throw new Error('حجم التصدير كبير جدًا في عملية واحدة');
     }
   }
-
-  return all;
+  }
+  return all.sort((a,b)=>c1202GovOrder(a.governorate_id??govList.find(g=>g.code===a.governorate_code)?.id,
+    b.governorate_id??govList.find(g=>g.code===b.governorate_code)?.id)||c1202CodeOrder.compare(String(a.reviewer_code||''),String(b.reviewer_code||''))||
+    c1202CodeOrder.compare(String(a.researcher_code||''),String(b.researcher_code||''))||c1202CodeOrder.compare(String(a.frame_serial||''),String(b.frame_serial||'')));
 }
 
 async function exportExecutionBalancesV11(projectId){
@@ -26971,8 +26463,6 @@ async function exportExecutionBalancesV11(projectId){
     showToast(err.message,'danger');
   }
 }
-
-/* -------------------- Import -------------------- */
 
 function mapExecutionImportRowRC1O(row){
   const pick=(keys)=>{
@@ -27065,6 +26555,7 @@ function openExecutionImportRC1O(projectId){
 }
 
 async function handleExecutionImportFileRC1O(file,projectId){
+  await ensureXLSXV11();
   if(!file) return;
   if(typeof XLSX==='undefined'){
     return showToast('مكتبة Excel لم تُحمّل','danger');
@@ -27267,25 +26758,19 @@ async function commitExecutionImportRC1O(batchId){
   }
 }
 
-
-/* ============ Init ============ */
-/* ============================================================
-   V11 C1.20 — USER-SCOPED DASHBOARD, GOVERNORATES, REQUESTS,
-   EXCEPTIONS AND CONFLICTS. Additive front-end overrides.
-   Server authorization lives in c120_* RPCs; never trust client role.
-   ============================================================ */
 const c120 = { project:'', gov:'', requestTab:'seating', requestCache:null };
 function c120N(v){return fmtNum(Number(v||0));}
 function c120Date(v){return v?fmtDateTime(v):'—';}
 function c120Option(v,label,selected){return `<option value="${esc(v)}" ${String(v)===String(selected)?'selected':''}>${esc(label)}</option>`;}
 async function c120Rpc(name, args={}){
+ if(['c120_dashboard','c120_governorates'].includes(name))return c12023ReadRpc(name,args);
  const started=performance.now();
  const readOnly=['c120_dashboard','c120_governorates','c120_requests',
   'c120_exceptions','c120_conflicts','c120_exception_candidates'].includes(name);
  let timer;
  try {
   const request=sb.rpc(name,args);
-  // Never time out write/approval RPCs: a timed-out write could still commit.
+
   const response=readOnly ? await Promise.race([
    request,
    new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(
@@ -27303,12 +26788,31 @@ function c120Stat(label,value,accent=''){
  return `<div class="kpi-card ${accent}"><div class="num nums">${c120N(value)}</div><div class="lbl">${esc(label)}</div></div>`;
 }
 
+let c12026ActiveProjectIds = new Set();
+async function c12026ActiveProjects(projects){
+ const rows=Array.isArray(projects)?projects:[];
+ const ids=[...new Set(rows.map(x=>x.id).filter(Boolean))].sort();
+ if(!ids.length)return [];
+ const statuses=await c12023Cached('active-project-status',{ids},async()=>{
+   const {data,error}=await sb.from('projects').select('id,status').in('id',ids);
+   if(error)throw new Error(error.message);
+   return data||[];
+ },60000);
+ const active=new Set(statuses.filter(x=>x.status==='active').map(x=>String(x.id)));
+ c12026ActiveProjectIds=active;
+ return rows.filter(x=>active.has(String(x.id)));
+}
 async function renderDashboard(){
  const c=document.getElementById('content');
- showLoading('content','جارِ تحميل متابعة نطاق عملك...');
+ if(c.querySelector('.c120-scope-header')){
+    const old=c.querySelector('#c12024Busy');if(old)old.remove();
+    c.insertAdjacentHTML('afterbegin','<div id="c12024Busy" class="notice-box" role="status">جار تحديث المؤشرات حسب الاختيار…</div>');
+  }else{
+    c.innerHTML='<div class="card" style="padding:20px"><h3>لوحة المتابعة التشغيلية</h3><p class="subtle">جار جلب المؤشرات الخاصة بنطاق عملك…</p><div class="spinner" style="width:20px;height:20px"></div></div>';
+  }
  try {
   const args={p_project_id:c120.project||null,p_governorate_id:c120.gov?Number(c120.gov):null};
-  // C1.20.1: avoid duplicate full-scope RPC when no filters are selected.
+
   let base, stats;
   if(!args.p_project_id && !args.p_governorate_id){
     base = await c120Rpc('c120_dashboard', {});
@@ -27320,14 +26824,17 @@ async function renderDashboard(){
     ]);
   }
   if(state.tab!=='dashboard')return;
-  const projects=Array.isArray(base.projects)?base.projects:[];
+  const projects=await c12026ActiveProjects(base.projects);
   const govs=Array.isArray(base.governorates)?base.governorates:[];
+  if(c120.project && !projects.some(p=>String(p.id)===String(c120.project))){
+    c120.project='';c120.gov='';return renderDashboard();
+  }
   const admin=(profile.role==='admin');
-  // Load admin-only user statistics after drawing the operational dashboard.
+
   const adminStatsPromise=admin?callRPC('get_user_stats').catch(()=>null):null;
   c.innerHTML=`
    <div class="card c120-scope-header">
-     <div class="flex-between"><div><h2>📊 لوحة المتابعة التشغيلية</h2>
+     <div class="flex-between"><div><h2>📊 لوحة المتابعة التشغيلية</h2> <button class="btn btn-outline btn-sm" onclick="c12023RefreshDashboard()">🔄 تحديث</button>
        <p class="subtle">المؤشرات حسب المشروعات والمحافظات المصرح لك بها فقط</p></div>
        <span class="badge badge-teal">${esc(roleAr(profile.role))}</span></div>
      <div class="grid cols-2">
@@ -27374,17 +26881,23 @@ async function renderDashboard(){
  }catch(e){showError('content',e.message);}
 }
 function c120SetDashboardFilter(which,value){
+ if(which==='project'&&value&&!c12026ActiveProjectIds?.has(String(value))){
+   showToast('المشروع غير نشط أو غير متاح لحسابك','danger');return;
+ }
  c120[which]=value;
  if(which==='project')c120.gov='';
  renderDashboard();
 }
 
 async function renderGovernorates(){
- const c=document.getElementById('content');showLoading('content','جارِ تحميل المحافظات المصرح بها...');
+ const c=document.getElementById('content');c.innerHTML='<div class="card"><h3>المحافظات</h3><p class="subtle">جار تحميل المحافظات التابعة لحسابك…</p></div>';
  try {
   const [base,items]=await Promise.all([c120Rpc('c120_dashboard',{}),c120Rpc('c120_governorates',{p_project_id:c120.project||null})]);
-  const projects=base.projects||[];
+  const projects=await c12026ActiveProjects(base.projects);
   if(state.tab!=='governorates')return;
+  if(c120.project&&!projects.some(p=>String(p.id)===String(c120.project))){
+    c120.project='';return renderGovernorates();
+  }
   c.innerHTML=`<div class="card"><div class="flex-between"><h2>🏛️ المحافظات حسب تبعية المستخدم</h2>
     <span class="badge badge-teal">${c120N(items.length)} محافظة</span></div>
     <div class="field" style="max-width:440px"><label>تصفية حسب المشروع</label>
@@ -27398,10 +26911,10 @@ async function renderGovernorates(){
     </div>`;
  }catch(e){showError('content',e.message);}
 }
-function c120SetGovProject(id){c120.project=id;c120.gov='';renderGovernorates();}
+function c120SetGovProject(id){if(id&&!c12026ActiveProjectIds.has(String(id)))return showToast('المشروع غير نشط','danger');c120.project=id;c120.gov='';renderGovernorates();}
 
 async function renderGovernorateDetail(){
- const c=document.getElementById('content');showLoading('content','جارِ التحقق من نطاق المحافظة...');
+ const c=document.getElementById('content');c.innerHTML='<div class="card"><h3>تفاصيل المحافظة</h3><p class="subtle">جار عرض البيانات المسموح بها…</p></div>';
  try {
   const govId=Number(state.activeGovId);
   const [govs,stats]=await Promise.all([
@@ -27410,7 +26923,7 @@ async function renderGovernorateDetail(){
   ]);
   const g=govs.find(x=>Number(x.id)===govId);
   if(!g)throw new Error('المحافظة خارج نطاق صلاحياتك أو لا تتبع المشروع المختار');
-  const projects=stats.projects||[];
+  const projects=await c12026ActiveProjects(stats.projects);
   setBreadcrumb([{label:'المحافظات',action:'goToGovernorates()'},{label:g.name}]);
   c.innerHTML=`<div class="card"><div class="flex-between"><h2>🏛️ ${esc(g.name)}</h2>
     <span class="badge badge-teal">نطاقك المعتمد</span></div>
@@ -27550,8 +27063,6 @@ async function renderConflicts(){
  }catch(e){showError('content',e.message);}
 }
 
-/* Direct worker-detail transfer controls also use the C120 authorization wrapper.
-   This matters after legacy RPC grants are revoked in Stage 2. */
 async function approveTransfer(workerId){
  if(profile.role!=='admin')return showToast('للمشرف العام فقط','danger');
  if(!confirm('الموافقة على نقل المحافظة؟'))return;
