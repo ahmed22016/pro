@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Unified Work Platform · V11.0 · build C1.22.3 (admin all project statuses, scoped operational roles) -->
+<!-- Unified Work Platform · V11.0 · build C1.22.4 (correct execution status counts in overview and reports) -->
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -7,7 +7,7 @@
 <title>منصة العمل الموحد</title>
 <meta name="theme-color" content="#0F2238">
 <meta name="application-name" content="منصة العمل الموحد">
-<meta name="app-build" content="V11.0-C1.22.3">
+<meta name="app-build" content="V11.0-C1.22.4">
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://cdn.sheetjs.com" crossorigin>
@@ -3087,7 +3087,7 @@ function renderLoginScreen(){
             <input id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••" dir="ltr" required>
           </div>
           <button class="login-btn" id="btnLogin" type="submit">دخول</button>
-          <div class="auth-build nums">الإصدار 11.0 · C1.22.3</div>
+          <div class="auth-build nums">الإصدار 11.0 · C1.22.4</div>
         </form>
       </section>
     </main>
@@ -7353,7 +7353,7 @@ async function loadProjectsDashboard(){
         .select('id,name,code,start_date,end_date,status,project_mode,created_at')
         .order('created_at',{ascending:false}),
       callRPC('get_projects_dashboard_v11').catch(err=>{
-        console.warn('[C1.22.3] Project KPI summary unavailable; listing projects without KPI values:',err);
+        console.warn('[C1.22.4] Project KPI summary unavailable; listing projects without KPI values:',err);
         return [];
       })
     ]);
@@ -8140,7 +8140,7 @@ async function renderProjectDetail(){
         <div class="flex-between" style="align-items:flex-start;">
           <div>
             <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;">
-              <div class="workspace-tag">Project Workspace · C1.22.3</div>
+              <div class="workspace-tag">Project Workspace · C1.22.4</div>
 
               ${state.projectTab!=='overview'?`
                 <button class="btn btn-outline btn-sm"
@@ -12189,6 +12189,35 @@ async function submitWorkforceRuleRC1J(projectId,planId=null){
   }
 }
 
+// C1.22.4: single authoritative source for execution status counts.
+// The project summary view can lag behind or exclude cycles, so do not treat
+// absent view fields as zero when active researcher reports contain balances.
+async function c1224ExecutionCounts(proj){
+  const cycleId=executionCycleIdRC1O(proj);
+  if(proj?.project_mode==='recurring' && !cycleId){
+    throw new Error('اختر دورة التشغيل أولًا لعرض أرصدة حالات الاستمارات');
+  }
+  const rows=await callRPC('get_field_execution_researcher_report_v11',{
+    p_project_id:proj.id,
+    p_cycle_id:cycleId,
+    p_governorate_id:null
+  });
+  if(!Array.isArray(rows))throw new Error('تعذر التحقق من أرصدة التنفيذ: استجابة غير متوقعة من الخادم');
+  const keys=['target_count','full_count','partial_count','excluded_count','in_progress_count','not_started_count'];
+  const result={};
+  for(const key of keys){
+    result[key]=rows.reduce((total,row)=>{
+      const v=row[key]==null?0:Number(row[key]);
+      if(!Number.isFinite(v) || v<0)throw new Error('رصيد تنفيذ غير صالح في الحقل '+key);
+      return total+v;
+    },0);
+  }
+  result.status_count=result.full_count+result.partial_count+result.excluded_count+
+    result.in_progress_count+result.not_started_count;
+  result.researcher_rows=rows.length;
+  return result;
+}
+
 async function renderProjectOverviewV11(proj, pg){
   if(c1202Restricted())return await c1202RenderLimitedOverview(proj,pg);
   const body = document.getElementById('projectBody');
@@ -12198,7 +12227,7 @@ async function renderProjectOverviewV11(proj, pg){
     const [
       execRes, qualityRes, ledgerRes, advancesRes, trainingRes, assignmentsRes, unitsRes
     ] = await Promise.all([
-      sb.from('v_execution_project_summary_v11').select('*').eq('project_id',proj.id).maybeSingle(),
+      c1224ExecutionCounts(proj),
       sb.from('quality_incidents').select('id,status,calculated_penalty').eq('project_id',proj.id),
       sb.from('financial_ledger').select('amount,status').eq('project_id',proj.id),
       sb.from('project_advances').select('amount,status').eq('project_id',proj.id),
@@ -12207,7 +12236,7 @@ async function renderProjectOverviewV11(proj, pg){
       sb.from('work_units').select('id',{count:'exact',head:true}).eq('project_id',proj.id)
     ]);
 
-    const ex = execRes.data || {};
+    const ex = execRes;
     const q = qualityRes.data || [];
     const ledger = ledgerRes.data || [];
     const advances = advancesRes.data || [];
@@ -12220,29 +12249,32 @@ async function renderProjectOverviewV11(proj, pg){
       .filter(x => ['paid','settled'].includes(x.status))
       .reduce((a,x)=>a+Number(x.amount||0),0);
 
-    const target = Number(ex.target_count || 0);
-    const closed = Number(ex.closed_balance || 0);
-    const executionPct = target ? Math.round(closed/target*100) : 0;
+    const target = ex.target_count;
+    const executionPct = target ? Math.round(ex.full_count/target*100) : null;
+    const statusNote = ex.status_count===target
+      ? `حالات التنفيذ متطابقة مع المستهدف المسند (${fmtNum(target)}).`
+      : `تنبيه: مجموع الحالات (${fmtNum(ex.status_count)}) يختلف عن المستهدف المسند (${fmtNum(target)}). راجع تبويب أرصدة التنفيذ.`;
 
     body.innerHTML = `
       <div class="v11-note">
         هذه النسخة لا تجمع الاستمارات الميدانية. المتابعة تبدأ بعد الإسناد وتعتمد على
-        <strong>أرصدة التنفيذ المجمعة</strong> والحسابات الإدارية والمالية.
+        <strong>أرصدة التنفيذ الفعلية من تقرير الباحثين</strong> والحسابات الإدارية والمالية.
+        <div class="subtle">المستهدف المسند: ${fmtNum(target)} · ${statusNote}</div>
       </div>
 
       <div class="kpi-grid">
         <div class="kpi-card"><div class="num nums">${assignmentsRes.count || 0}</div><div class="lbl">تسكينات نشطة</div></div>
         <div class="kpi-card teal"><div class="num nums">${unitsRes.count || 0}</div><div class="lbl">وحدات / مناطق عمل</div></div>
-        <div class="kpi-card success"><div class="num nums">${executionPct}%</div><div class="lbl">رصيد مغلق من المستهدف</div></div>
+        <div class="kpi-card success"><div class="num nums">${executionPct==null?'—':executionPct+'%'}</div><div class="lbl">الاستيفاء الكامل من المستهدف</div></div>
         <div class="kpi-card amber"><div class="num nums">${q.filter(x=>x.status==='confirmed').length}</div><div class="lbl">أخطاء جودة مثبتة</div></div>
       </div>
 
       <div class="v11-grid-5" style="margin-bottom:16px;">
-        <div class="v11-status-card"><div class="n nums">${ex.full_count || 0}</div><div class="t">استيفاء كامل</div></div>
-        <div class="v11-status-card"><div class="n nums">${ex.partial_count || 0}</div><div class="t">استيفاء جزئي</div></div>
-        <div class="v11-status-card"><div class="n nums">${ex.excluded_count || 0}</div><div class="t">مستبعد</div></div>
-        <div class="v11-status-card"><div class="n nums">${ex.in_progress_count || 0}</div><div class="t">جاري الاستيفاء</div></div>
-        <div class="v11-status-card"><div class="n nums">${ex.not_started_count || 0}</div><div class="t">لم يبدأ</div></div>
+        <div class="v11-status-card"><div class="n nums">${fmtNum(ex.full_count)}</div><div class="t">استيفاء كامل</div></div>
+        <div class="v11-status-card"><div class="n nums">${fmtNum(ex.partial_count)}</div><div class="t">استيفاء جزئي</div></div>
+        <div class="v11-status-card"><div class="n nums">${fmtNum(ex.excluded_count)}</div><div class="t">مستبعد</div></div>
+        <div class="v11-status-card"><div class="n nums">${fmtNum(ex.in_progress_count)}</div><div class="t">جاري الاستيفاء</div></div>
+        <div class="v11-status-card"><div class="n nums">${fmtNum(ex.not_started_count)}</div><div class="t">لم يبدأ</div></div>
       </div>
 
       <div class="grid cols-2">
@@ -23977,7 +24009,7 @@ async function renderProjectReportsV11Tab(proj){
   const body=document.getElementById('projectBody');
   try{
     const [exR,qR,posR,trR,factorR,batchR]=await Promise.all([
-      sb.from('v_execution_project_summary_v11').select('*').eq('project_id',proj.id).maybeSingle(),
+      c1224ExecutionCounts(proj),
       sb.from('quality_incidents').select('status,severity,calculated_penalty').eq('project_id',proj.id),
       ['admin','project_manager','region','followup'].includes(profile?.role)
         ?sb.from('v_project_financial_position_v11').select('*').eq('project_id',proj.id)
@@ -23987,7 +24019,7 @@ async function renderProjectReportsV11Tab(proj){
       sb.from('project_payment_batches_v11').select('id,status,total_amount').eq('project_id',proj.id)
     ]);
 
-    const ex=exR.data||{},q=qR.data||[],pos=posR.data||[],tr=trR.data||[];
+    const ex=exR,q=qR.data||[],pos=posR.data||[],tr=trR.data||[];
     const factorRows=factorR.data||[],batches=batchR.data||[];
     const due=pos.reduce((a,x)=>a+Number(x.net_due||0),0);
     const ent=pos.reduce((a,x)=>a+Number(x.entitlement_total||0),0);
@@ -24009,6 +24041,7 @@ async function renderProjectReportsV11Tab(proj){
       Number(ex.not_started_count||0)*factors.not_started;
 
     body.innerHTML=`
+      <div class="v11-note">حالات التنفيذ من تقرير الباحثين الفعلي · المستهدف المسند: ${fmtNum(ex.target_count)} · مجموع الحالات: ${fmtNum(ex.status_count)}${ex.status_count!==ex.target_count?' · ⚠️ يرجى مراجعة عدم الاتساق':''}</div>
       <div class="v11-section-title">
         <div>
           <h3 style="margin:0;">📑 التقارير التنفيذية والمالية</h3>
@@ -24902,7 +24935,7 @@ function openFrameImportModalV11(projectId){
         جدول <span class="nums">districts</span>.
       </p>
       <div class="subtle nums" style="margin-bottom:8px;">
-        Frame Engine: V11.0-C1.22.3 · بصمة الملف / استكمال الرفع / مقارنة الإضافات والتعديلات قبل الاعتماد
+        Frame Engine: V11.0-C1.22.4 · بصمة الملف / استكمال الرفع / مقارنة الإضافات والتعديلات قبل الاعتماد
       </div>
 
       <div class="notice-box" style="margin-bottom:14px;">
