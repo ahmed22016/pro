@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Unified Work Platform · V11.0 · build C1.22.4 (correct execution status counts in overview and reports) -->
+<!-- Unified Work Platform · V11.0 · build C1.22.8 · SECURITY RELEASE CANDIDATE -->
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -7,7 +7,7 @@
 <title>منصة العمل الموحد</title>
 <meta name="theme-color" content="#0F2238">
 <meta name="application-name" content="منصة العمل الموحد">
-<meta name="app-build" content="V11.0-C1.22.4">
+<meta name="app-build" content="V11.0-C1.22.8-RC">
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://cdn.sheetjs.com" crossorigin>
@@ -1252,6 +1252,19 @@ td{
   .breadcrumb{line-height:1.8;}
 }
 
+
+/* V11 approval inbox — neutral, compact, scoped counters */
+.v11-notif-host{position:relative;display:inline-flex;align-items:center;z-index:110}
+.v11-bell{position:relative;min-height:38px!important;display:inline-flex;align-items:center;gap:7px!important;background:#fff!important;color:#17324A!important;border:1px solid #D4DFEA!important;border-radius:11px!important;padding:7px 12px!important;cursor:pointer;white-space:nowrap}
+.v11-bell-count{display:inline-grid;place-items:center;min-width:19px;height:19px;border-radius:12px;background:#AA343D;color:#fff;font:700 11px/1 Arial,sans-serif;padding:0 5px}
+.v11-tab-count{display:inline-flex;align-items:center;justify-content:center;min-width:19px;border-radius:12px;padding:2px 6px;background:#E8EDF3;color:#15344C;margin-inline-start:5px;font-size:11px;font-weight:750;font-variant-numeric:tabular-nums}
+.v11-notif-panel{position:absolute;top:calc(100% + 11px);inset-inline-end:0;width:min(410px,calc(100vw - 30px));max-height:65vh;overflow:auto;background:var(--card,#fff);color:var(--ink,#1F3443);border:1px solid #D4DFEA;border-radius:15px;box-shadow:0 18px 45px rgba(16,40,63,.17);z-index:1102;direction:rtl;text-align:right}
+.v11-notif-row{display:block;width:100%;border:0;background:transparent;border-top:1px solid #E7EDF2;padding:11px 13px;text-align:right;cursor:pointer;color:inherit}
+.v11-notif-row:hover,.v11-notif-row:focus-visible{background:#F3F7FA}
+.v11-notif-sub{font-size:11px;color:#647789;margin-top:3px}
+.v11-notif-head{padding:13px;display:flex;align-items:center;justify-content:space-between;gap:7px}
+.v11-focused-request{outline:2px solid #B6C9D9;outline-offset:-2px;background:#F4F8FA}
+
 </style>
 <style id="calm-design-c18">
 /* C1.8 visual edition — screen only; operational code and print layouts unchanged. */
@@ -1435,6 +1448,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--teal);box-shadow:0 0 
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
 </style>
+<!-- V11-SEATING-WORKFLOW-CANDIDATE: requires matching SQL migration -->
 </head>
 <body>
 
@@ -1527,6 +1541,125 @@ async function loadAllDistrictsPagedV11(force=false){
 }
 
 let pendingCounts = { pending_seating: 0, pending_structure: 0, pending_edit_requests: 0, pending_workforce: 0 };
+
+// ==========================================================
+// V11 approval inbox: unresolved, scoped, permission-based.
+// Never treats read/seen as approval. Resolved requests disappear
+// because each refresh queries status=pending on the server.
+// ==========================================================
+const v11Notif={counts:[],visible:[],notifications:[],exceptions:[],total:0,
+  loaded:false,error:'',exceptionWarning:'',open:false,activeRequest:'',
+  fetching:null,lastRefresh:0,pollReady:false};
+function v11PendingKind(kind,projectId=null){
+  return (v11Notif.counts||[]).reduce((n,r)=>n+(
+    r.kind===kind && (projectId===null||String(r.project_id||'')===String(projectId))
+      ? Number(r.pending_count||0):0),0);
+}
+function v11PendingProject(projectId){
+  return (v11Notif.counts||[]).reduce((n,r)=>n+(
+    r.project_id&&String(r.project_id)===String(projectId)
+      ? Number(r.pending_count||0):0),0);
+}
+function v11CountChip(n){
+  n=Number(n||0);
+  return n>0?`<span class="v11-tab-count nums" aria-label="${n} طلب معلق">${n>999?'999+':n}</span>`:'';
+}
+function v11CanNotify(){return !!profile&&['admin','project_manager','region','office'].includes(profile.role);}
+function v11BellHtml(){
+  if(!v11CanNotify())return '';
+  const total=Number(v11Notif.total||0);
+  const rows=(v11Notif.notifications||[]).slice(0,30);
+  return `<div class="v11-notif-host" id="v11NotifHost">
+    <button type="button" class="v11-bell" aria-label="الطلبات المطلوبة للموافقة: ${total}"
+      aria-expanded="${v11Notif.open?'true':'false'}" onclick="v11ToggleNotifications()">
+      <span aria-hidden="true">🔔</span><span>الموافقات</span>
+      ${total?v11BellCount(total):''}
+    </button>
+    <div id="v11NotifPanel" class="v11-notif-panel" role="region"
+         aria-label="الطلبات المعلقة المطلوبة لموافقتك"
+         style="display:${v11Notif.open?'block':'none'}">
+      <div class="v11-notif-head"><strong>مطلوب موافقتك (${total})</strong>
+        <button type="button" class="btn btn-outline btn-sm" onclick="v11RefreshNotifications()" title="تحديث الإشعارات">↻ تحديث</button></div>
+      ${v11Notif.error?`<div class="notice-box warning" style="margin:0 10px 10px">${esc(v11Notif.error)}</div>`:''}
+      ${v11Notif.exceptionWarning?`<div class="v11-notif-sub" style="padding:0 12px 10px">${esc(v11Notif.exceptionWarning)}</div>`:''}
+      ${!v11Notif.loaded?'<div class="v11-notif-sub" style="padding:16px">جار تحميل الإشعارات...</div>':
+         !rows.length?'<div class="v11-notif-sub" style="padding:16px">لا توجد طلبات تنتظر موافقتك الآن.</div>':
+         rows.map(r=>`<button type="button" class="v11-notif-row"
+           onclick="v11OpenApproval('${esc(r.kind)}','${esc(r.project_id||'')}','${esc(r.request_id||'')}')">
+           <strong>${esc(r.heading||'طلب اعتماد')}</strong>
+           <div class="v11-notif-sub">${esc(r.project_name||'إجراء إداري')} · ${esc(r.description||'')}
+           </div><div class="v11-notif-sub">${esc(r.submitted_at?fmtDateTime(r.submitted_at):'')}</div>
+           </button>`).join('')}
+      ${total>rows.length?`<div class="v11-notif-sub" style="padding:12px">هناك ${total-rows.length} طلبات أخرى؛ افتح مركز الطلبات أو المشروع.</div>`:''}
+    </div>
+  </div>`;
+}
+function v11BellCount(total){return `<span class="v11-bell-count nums">${total>99?'99+':total}</span>`;}
+function v11ToggleNotifications(){
+  v11Notif.open=!v11Notif.open;
+  renderHeaderNavigationRC1K();
+  if(v11Notif.open && Date.now()-v11Notif.lastRefresh>15000)refreshPendingCounts();
+}
+async function v11RefreshNotifications(){await refreshPendingCounts();}
+function v11OpenApproval(kind,projectId,id){
+  v11Notif.open=false;
+  v11Notif.activeRequest=id;
+  if(['seating','structure','frame'].includes(kind)&&projectId){
+    v11ProjectRequestUI.section=kind;
+    openProject(projectId,'requests');
+  }else if(kind==='exceptions'){
+    goToExceptions();
+  }else if(['edits','transfers'].includes(kind)){
+    c120.requestTab=kind;
+    goToRequests();
+  }else{
+    goToRequests();
+  }
+}
+function v11InitNotificationPolling(){
+  if(v11Notif.pollReady)return;
+  v11Notif.pollReady=true;
+  window.setInterval(()=>{
+    if(profile&&document.visibilityState==='visible'&&Date.now()-v11Notif.lastRefresh>=3540000){
+      refreshPendingCounts();
+    }
+  },3600000);
+  document.addEventListener('visibilitychange',()=>{
+    if(profile&&document.visibilityState==='visible'&&Date.now()-v11Notif.lastRefresh>3600000){
+      refreshPendingCounts();
+    }
+  });
+  document.addEventListener('click',e=>{
+    if(v11Notif.open&&!e.target.closest('#v11NotifHost')){
+      v11Notif.open=false;
+      const p=document.getElementById('v11NotifPanel');if(p)p.style.display='none';
+      const b=document.querySelector('#v11NotifHost .v11-bell');if(b)b.setAttribute('aria-expanded','false');
+    }
+  });
+}
+function v11RefreshVisibleCounters(){
+  if(!profile)return;
+  renderNav();
+  renderHeaderNavigationRC1K();
+  const p=state.activeProjectId;
+  if(state.tab==='project-detail'&&p){
+    document.querySelectorAll('.workspace-tab[data-v11-project-requests]').forEach(b=>{
+      const chip=b.querySelector('.v11-tab-count'); if(chip)chip.remove();
+      b.insertAdjacentHTML('beforeend',v11CountChip(v11PendingProject(p)));
+    });
+    document.querySelectorAll('.v11-req-subtab[data-v11-kind]').forEach(b=>{
+      const chip=b.querySelector('.v11-tab-count');if(chip)chip.remove();
+      b.insertAdjacentHTML('beforeend',v11CountChip(v11PendingKind(b.dataset.v11Kind,p)));
+    });
+  }
+  if(state.tab==='requests'){
+    document.querySelectorAll('.v11-hub-subtab[data-v11-kind]').forEach(b=>{
+      const chip=b.querySelector('.v11-tab-count');if(chip)chip.remove();
+      b.insertAdjacentHTML('beforeend',v11CountChip(v11PendingKind(b.dataset.v11Kind)));
+    });
+  }
+}
+
 
 const state = {
 
@@ -1770,7 +1903,7 @@ function canWriteOperational(){
 }
 
 function canApproveSeating(){
-  return ['region','admin'].includes(profile?.role);
+  return ['admin','project_manager'].includes(profile?.role);
 }
 
 function canApproveStructure(){
@@ -3043,6 +3176,7 @@ async function boot(){
     sb.rpc=function(fn,...rest){
       const q=rpc0(fn,...rest), then0=q.then.bind(q);
       q.then=(ok,fail)=>then0(r=>{
+        if(r&&r.error&&(r.error.code==='57014'||/statement timeout/i.test(r.error.message||''))){ r.error=friendlyDbErrorV11(r.error); }
         if(r&&r.error&&(r.error.code==='PGRST202'||/Could not find the function/i.test(r.error.message||''))){
           console.error('Missing or mismatched server function:',fn,r.error);
           r.error=Object.assign({},r.error,{message:'دالة الخادم «'+fn+'» غير مثبّتة أو لا تطابق هذا الإصدار. ثبّت ملف SQL المناسب ثم أعد المحاولة.'});
@@ -3087,7 +3221,7 @@ function renderLoginScreen(){
             <input id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••" dir="ltr" required>
           </div>
           <button class="login-btn" id="btnLogin" type="submit">دخول</button>
-          <div class="auth-build nums">الإصدار 11.0 · C1.22.4</div>
+          <div class="auth-build nums">الإصدار 11.0 · C1.22.7</div>
         </form>
       </section>
     </main>
@@ -3135,7 +3269,7 @@ let startupPendingC17=Promise.resolve();
 async function fetchAllPagedV11(make,size=1000){
   /* C1.22: uses the exact server count; the effective server cap is detected from the first page and any shortfall is reported as an error */
   const first=await make({count:'exact'}).range(0,size-1);
-  if(first.error) return {data:null,error:first.error};
+  if(first.error) return {data:null,error:friendlyDbErrorV11(first.error)};
   let all=first.data||[];
   let total=first.count;
   if(total==null){
@@ -3229,6 +3363,12 @@ async function loadProfile(){
   
   profile = data;
 
+  if(state.tab==='dashboard'){
+    // Use the existing per-user scoped read cache; route() consumes the same promise.
+    c12023ReadRpc('c120_dashboard',{}).catch(err=>
+      console.warn('[V11 fast] dashboard warm-up:',err.message));
+  }
+
   sb.from('profiles')
     .update({ last_login_at: new Date().toISOString() })
     .eq('id', profile.id)
@@ -3251,12 +3391,9 @@ async function loadProfile(){
     console.warn('Regions are not available:', regionsError.message);
   }
 
-  const loginUserC17=profile.id;
-  startupPendingC17=refreshPendingCounts();
+  // Do not run the expensive approval inbox while the first dashboard is loading.
+  // renderApp will start the inbox only after the initial view is rendered.
   renderApp();
-  startupPendingC17.then(()=>{
-    if(profile?.id===loginUserC17) renderNav();
-  }).catch(err=>console.warn('Pending counts:',err));
 }
 
 function renderApp(){
@@ -3291,7 +3428,19 @@ function renderApp(){
   `;
   
   renderNav();
-  route();
+  const initialUserId=profile?.id;
+  const initialView=route();
+  v11InitNotificationPolling();
+  Promise.resolve(initialView).finally(()=>{
+    if(profile?.id!==initialUserId)return;
+    // Notifications are independent of navigation. Do not hold the first paint.
+    // Allow at least one paint after KPI rendering before the inbox starts.
+    window.setTimeout(()=>{
+      if(profile?.id!==initialUserId)return;
+      startupPendingC17=refreshPendingCounts();
+      startupPendingC17.catch(err=>console.warn('[V11 fast] approval inbox:',err));
+    },350);
+  });
 }
 
 function isNavActive(id){
@@ -3334,18 +3483,14 @@ function renderNav(){
   if(['admin','region','followup','office'].includes(role)){
     sharedItems.push({id:'governorates',label:'المحافظات',icon:'🏛️',action:'goToGovernorates()',badge:0});
   }
-  if(['admin','region'].includes(role)){
+  if(['admin','region','office','project_manager'].includes(role)){
     const totalRequests =
       (pendingCounts.pending_seating || 0) +
       (pendingCounts.pending_structure || 0) +
-      (pendingCounts.pending_edit_requests || 0);
+      (pendingCounts.pending_edit_requests || 0) +
+      (pendingCounts.pending_transfers || 0) +
+      (pendingCounts.pending_frame || 0);
     sharedItems.push({id:'requests',label:'مركز الطلبات',icon:'📋',action:'goToRequests()',badge:totalRequests});
-  }
-  if(role === 'region'){
-    sharedItems.push({
-      id:'seating-requests',label:'طلبات التسكين',icon:'✋',
-      action:'goToSeatingRequests()',badge:pendingCounts.pending_seating || 0
-    });
   }
   if(['admin','project_manager','region','office'].includes(role)){
     sharedItems.push({id:'exceptions',label:'الاستثناءات',icon:'⚠️',action:'goToExceptions()',badge:0});
@@ -3476,7 +3621,7 @@ function renderHeaderNavigationRC1K(){
     `);
   }
 
-  el.innerHTML=buttons.join('');
+  el.innerHTML=buttons.join('')+v11BellHtml();
 }
 
 async function refreshAfterAssignmentChangeRC1K(){
@@ -4913,37 +5058,16 @@ async function submitUserForm(mode, userId){
       
       showToast('✅ تم إنشاء المستخدم بنجاح', 'success');
     } else {
-      const { error: e1 } = await sb.from('profiles')
-        .update({
-          full_name: name,
-          role,
-          updated_at: new Date().toISOString(),
-          updated_by: profile.id
-        })
-        .eq('id', userId);
-      
-      if(e1) throw new Error(e1.message);
-      
-      await sb.from('profile_governorates').delete().eq('profile_id', userId);
-      
-      if(['region','office','committee'].includes(role) && govIds.length){
-        const rows = govIds.map(gid => ({
-          profile_id: userId,
-          governorate_id: gid
-        }));
-        const { error: e2 } = await sb.from('profile_governorates').insert(rows);
-        if(e2) throw new Error(e2.message);
-      }
-      
-      await sb.from('audit_log').insert({
-        actor_id: profile.id,
-        action: 'update_user',
-        target_id: userId,
-        target_type: 'profiles',
-        details: { role, region_id: role === 'region' ? Number(regionId) : null, governorate_ids: govIds }
+      // C1.22.8: transactionally update the user, their geographic scope and the audit event.
+      // The server validates admin role and active-account state; never write profiles or audit_log directly here.
+      const saved = await callRPC('admin_update_user_profile_v11', {
+        p_user_id: userId,
+        p_full_name: name,
+        p_role: role,
+        p_governorate_ids: ['region','office','committee'].includes(role) ? govIds : []
       });
-      
-      showToast('✅ تم حفظ التعديلات', 'success');
+      if (!saved?.success) throw new Error('لم يؤكد الخادم اكتمال تحديث المستخدم والتدقيق');
+      showToast('✅ تم حفظ بيانات المستخدم ومحافظاته وتسجيل العملية', 'success');
     }
     
     closeModal('userFormModal');
@@ -5060,7 +5184,7 @@ async function renderAdminTargets(){
     const { data: govs, error } = await sb.from('governorates').select('*').order('code');
     if(error) throw error;
 
-    const { data: inds } = await sb.from('individuals').select('governorate_id');
+    const { data: inds } = await fetchAllPagedSafeV11('individuals','governorate_id',q=>q);
     const counts = {};
     (inds || []).forEach(i => {
       counts[i.governorate_id] = (counts[i.governorate_id] || 0) + 1;
@@ -5708,14 +5832,19 @@ async function refreshSlotAssignmentCandidates(slotId){
 }
 
 async function openCreateAssignmentModal(){
-  const {data:slots}=await sb.from('structure_slots')
-    .select('*')
-    .eq('project_id',state.activeProjectId)
-    .eq('status','vacant')
-    .order('code');
-
-  if(!slots||slots.length===0){
-    return showToast('لا توجد أكواد شاغرة في هذا المشروع','danger');
+  let slots;
+  try {
+    const rows=await callRPC('c12024_structure',{
+      p_project_id:state.activeProjectId
+    });
+    if(!Array.isArray(rows)) throw new Error('تعذر قراءة الهيكل ضمن صلاحيات المستخدم');
+    slots=rows.filter(s=>s.status==='vacant' && !s.individual_id &&
+      c1202AllowGov(s.governorate_id)).sort(c1202SlotOrder);
+  }catch(err){
+    return showToast('تعذر تحميل الخانات الشاغرة: '+err.message,'danger');
+  }
+  if(slots.length===0){
+    return showToast('لا توجد أكواد شاغرة متاحة في نطاقك داخل هذا المشروع','danger');
   }
 
   const modalHtml=`
@@ -5814,7 +5943,7 @@ async function openCreateAssignmentModal(){
                 onclick="closeModal('createAssignModal')">إلغاء</button>
         <button class="btn btn-primary" id="btnCreateAssign"
                 onclick="submitCreateAssignment()">
-          🔗 إنشاء التسكين
+          ${['region','office'].includes(profile?.role)?'📨 إرسال طلب تسكين':'🔗 إنشاء التسكين'}
         </button>
       </div>
     </div>
@@ -5876,6 +6005,22 @@ async function submitCreateAssignment(){
   };
 
   try{
+    if(['region','office'].includes(profile.role)){
+      await callRPC('v11_submit_seating_request',{
+        p_type:'assign',
+        p_slot_id:slotId,
+        p_individual_id:individualId,
+        p_assignment_id:null,
+        p_start_date:startDate,
+        p_end_date:endDate,
+        p_reason:notes
+      });
+      closeModal('createAssignModal');
+      showToast('✅ تم إرسال طلب التسكين لمدير المشروع والمشرف العام','success');
+        await refreshPendingCounts();
+      await refreshAfterAssignmentChangeRC1K();
+      return;
+    }
     if(workforceOverride){
       await callRPC('create_assignment_workforce_override_v11',{
         p_individual_id:individualId,
@@ -6036,9 +6181,10 @@ async function submitOverrideConflict(){
 }
 
 function openEndAssignmentModal(assignmentId, personName){
+  const isRequest=['region','office'].includes(profile?.role);
   const modalHtml = `
     <div class="modal-box">
-      <h3>⏹️ إنهاء التسكين</h3>
+      <h3>${isRequest?'📨 طلب إنهاء التسكين':'⏹️ إنهاء التسكين'}</h3>
       <p class="sub">الفرد: <strong>${esc(personName)}</strong></p>
       
       <div class="field" style="margin-bottom:14px;">
@@ -6048,18 +6194,18 @@ function openEndAssignmentModal(assignmentId, personName){
       </div>
       
       <div class="field" style="margin-bottom:14px;">
-        <label>سبب الإنهاء (اختياري)</label>
+        <label>${isRequest?'سبب طلب الإنهاء * (10 أحرف على الأقل)':'سبب الإنهاء (اختياري)'}</label>
         <textarea id="endReason" class="input" rows="2"></textarea>
       </div>
       
       <div style="background:#FBF2E1;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:12px;color:var(--muted);">
-        ℹ️ سيتم إلغاء جميع تكليفات الوحدات المرتبطة بهذا التسكين.
+        🛡️ لا يتم إنهاء التسكين قبل فك أو نقل أي وحدات مرتبطة به وتوثيق ذلك في سجل الإطار.${isRequest?' الطلب لا يغيّر التسكين حتى اعتماده.':''}
       </div>
       
       <div class="flex-end">
         <button class="btn btn-outline" onclick="closeModal('endAssignModal')">إلغاء</button>
         <button class="btn btn-danger" onclick="submitEndAssignment('${assignmentId}')">
-          ⏹️ تأكيد الإنهاء
+          ${isRequest?'📨 إرسال طلب إنهاء':'⏹️ تأكيد الإنهاء'}
         </button>
       </div>
     </div>
@@ -6072,16 +6218,18 @@ async function submitEndAssignment(assignmentId){
   const reason = document.getElementById('endReason').value.trim() || null;
   
   if(!endDate) return showToast('تاريخ الإنهاء مطلوب', 'danger');
-  
+  const isRequest=['region','office'].includes(profile?.role);
+  if(isRequest && (!reason || reason.length<10)){
+    return showToast('سبب طلب الإنهاء مطلوب (10 أحرف على الأقل)','danger');
+  }
   try {
-    await callRPC('end_assignment', {
+    await callRPC(isRequest?'v11_submit_end_assignment_request':'end_assignment', {
       p_assignment_id: assignmentId,
       p_end_date: endDate,
       p_reason: reason
     });
-    
     closeModal('endAssignModal');
-    showToast('✅ تم إنهاء التسكين', 'success');
+    showToast(isRequest?'✅ تم إرسال طلب الإنهاء للاعتماد':'✅ تم إنهاء التسكين','success');
     await refreshAfterAssignmentChangeRC1K();
   } catch(err) {
     showToast(err.message, 'danger');
@@ -6202,10 +6350,7 @@ async function renderUnits(){
   showLoading('content', 'جارِ تحميل الوحدات...');
   
   try {
-    const { data: units, error } = await sb.from('work_units')
-      .select('*')
-      .eq('project_id', state.activeProjectId)
-      .order('unit_code');
+    const { data: units, error } = await fetchAllPagedV11((o)=>sb.from('work_units').select('*',o).eq('project_id', state.activeProjectId).order('unit_code').order('id'));
     
     if(error) throw error;
     
@@ -6486,11 +6631,7 @@ async function viewUnitDetails(unitId){
 }
 
 async function openAssignUnitModal(assignmentId){
-  const { data: units } = await sb.from('work_units')
-    .select('*')
-    .eq('project_id', state.activeProjectId)
-    .eq('status', 'pending')
-    .order('unit_code');
+  const { data: units } = await fetchAllPagedV11((o)=>sb.from('work_units').select('*',o).eq('project_id', state.activeProjectId).eq('status', 'pending').order('unit_code').order('id'));
   
   if(!units || units.length === 0){
     return showToast('لا توجد وحدات شاغرة', 'danger');
@@ -8127,7 +8268,7 @@ async function renderProjectDetail(){
 
     const tabs=[
       ['overview','📊','نظرة عامة'],['setup','⚙️','إعداد المشروع'],...(!c1202Restricted()?[['cycles','🔄','الدورات والإطار']]:[]),
-      ['workforce','👥','خطة القوى البشرية'],['structure','🧩','الهيكل'],['assignments','🔗','التسكينات'],
+      ['workforce','👥','خطة القوى البشرية'],['structure','🧩','الهيكل'],['assignments','🔗','التسكينات'],['requests','📨','طلبات المشروع'],
       ['training','🎓','التدريب'],['operations','📦','الإسناد ووحدات العمل'],['execution','📈','أرصدة التنفيذ'],
       ...(!c1202Restricted()?[['quality','🛡️','الجودة والجزاءات']]:[]),
       ...(financeVisible?[['finance','💰','المالية والتسوية']]:[]),
@@ -8140,7 +8281,7 @@ async function renderProjectDetail(){
         <div class="flex-between" style="align-items:flex-start;">
           <div>
             <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;">
-              <div class="workspace-tag">Project Workspace · C1.22.4</div>
+              <div class="workspace-tag">Project Workspace · C1.22.4 · مراجعة طلبات الإسناد</div>
 
               ${state.projectTab!=='overview'?`
                 <button class="btn btn-outline btn-sm"
@@ -8178,7 +8319,7 @@ async function renderProjectDetail(){
         </div>
       </div>
       <div class="workspace-tabs">
-        ${tabs.map(([id,icon,label])=>`<button class="workspace-tab ${state.projectTab===id?'active':''}" onclick="openProjectTab('${id}')">${icon} ${label}</button>`).join('')}
+        ${tabs.map(([id,icon,label])=>`<button class="workspace-tab ${state.projectTab===id?'active':''}" ${id==='requests'?'data-v11-project-requests="1"':''} onclick="openProjectTab('${id}')">${icon} ${label} ${id==='requests'?v11CountChip(v11PendingProject(proj.id)):''}</button>`).join('')}
       </div>
       <div id="projectBody"></div>`;
 
@@ -8200,6 +8341,7 @@ async function renderProjectDetail(){
     else if(state.projectTab==='workforce') await renderProjectWorkforceTab(proj);
     else if(state.projectTab==='structure') await renderProjectStructureTab(proj,govIds);
     else if(state.projectTab==='assignments') await renderProjectAssignmentsTab(proj);
+    else if(state.projectTab==='requests') await renderProjectRequestsV11Tab(proj);
     else if(state.projectTab==='training') await renderProjectTrainingV11Tab(proj);
     else if(state.projectTab==='operations') await renderProjectUnitsTab(proj);
     else if(state.projectTab==='execution') await renderProjectExecutionV11Tab(proj);
@@ -9364,16 +9506,19 @@ function _findCol(row, label){
 
 function processImportRows(rows, existingIndividuals){
   const byNid = new Map(existingIndividuals.map(i => [String(i.national_id), i]));
-  const changes = [];       
+  const changes = [];
+  const missingNid = [];
+  let existingMatched = 0;
 
   const newCandidates = []; 
 
-  rows.forEach(row => {
+  rows.forEach((row, rowIdx) => {
     const nidCol = _findCol(row, 'الرقم القومي');
     const nid = nidCol ? String(row[nidCol]).trim() : '';
-    if(!nid) return;
+    if(!nid){ missingNid.push(rowIdx+2); return; }
 
     const existing = byNid.get(nid);
+    if(existing) existingMatched++;
 
     if(!existing){
       const govCol = _findCol(row, 'المحافظة');
@@ -9410,7 +9555,7 @@ function processImportRows(rows, existingIndividuals){
         newVal = boolFromDisplay(raw);
         if(newVal === null) return;
         oldVal = existing[field];
-        if(!!oldVal === !!newVal) return;
+        if(oldVal!=null && !!oldVal === !!newVal) return;
         displayOld = boolToDisplay(oldVal); displayNew = boolToDisplay(newVal);
       } else if(kind==='gender'){
         newVal = genderFromDisplay(raw);
@@ -9447,10 +9592,11 @@ function processImportRows(rows, existingIndividuals){
     if(diffs.length) changes.push({ individual: existing, diffs });
   });
 
-  renderImportReview(changes, newCandidates, rows.length);
+  renderImportReview(changes, newCandidates, rows.length, {missingNid, existingMatched});
 }
 
-function renderImportReview(changes, newCandidates, totalRows){
+function renderImportReview(changes, newCandidates, totalRows, stats){
+  stats = stats || {missingNid:[], existingMatched: totalRows - newCandidates.length};
   const validNew = newCandidates.filter(c => c.valid);
   const invalidNew = newCandidates.filter(c => !c.valid);
   const isAdminUser = profile.role === 'admin';
@@ -9459,11 +9605,14 @@ function renderImportReview(changes, newCandidates, totalRows){
     <div class="modal-box wide">
       <h3>مراجعة الاستيراد قبل الحفظ</h3>
       <p class="sub">
-        إجمالي صفوف الملف: ${totalRows} — مطابق لسجلات موجودة: ${totalRows - newCandidates.length} —
-        لديهم تغييرات فعلية: <b>${changes.length}</b> —
-        مرشحون جدد صالحون للإضافة: <b style="color:#3E7C55;">${validNew.length}</b>
-        ${invalidNew.length ? ` — <span style="color:#B3492F;">صفوف غير صالحة: ${invalidNew.length}</span>` : ''}
+        إجمالي صفوف الملف: <b>${totalRows}</b> =
+        موجودون: <b>${stats.existingMatched}</b> (بهم تغييرات: <b>${changes.length}</b> — بلا تغيير: <b>${stats.existingMatched - changes.length}</b>) +
+        جدد صالحون: <b style="color:#3E7C55;">${validNew.length}</b> +
+        جدد غير صالحين: <b style="color:#B3492F;">${invalidNew.length}</b> +
+        بلا رقم قومي: <b style="color:#B3492F;">${stats.missingNid.length}</b>
+        ${(stats.existingMatched + newCandidates.length + stats.missingNid.length) !== totalRows ? '<br><span style="color:#B3492F;font-weight:700;">تنبيه: مجموع التصنيفات لا يطابق إجمالي الصفوف، لا تحفظ قبل مراجعة الملف.</span>' : ''}
       </p>
+      ${stats.missingNid.length ? `<p class="subtle" style="color:#B3492F;">صفوف بلا رقم قومي (لن تُعالج) — أرقام الصفوف في Excel: ${stats.missingNid.slice(0,60).join('، ')}${stats.missingNid.length>60?' …':''}</p>` : ''}
       ${!isAdminUser && changes.length ? `<p class="subtle">بصفتك ${roleAr(profile.role)}، التعديلات على مشتغلين موجودين ستُرسَل كطلبات تعديل بانتظار اعتماد الأدمن (وليست فورية).</p>` : ''}
 
       ${changes.length ? `
@@ -9531,12 +9680,50 @@ function renderImportReview(changes, newCandidates, totalRows){
   if(applyBtn) applyBtn.onclick = () => applyImportReview(changes, validNew, isAdminUser, applyBtn);
 }
 
+
+/* C1.22.7: paged read that falls back to the plain query only if the ordering column is missing */
+async function fetchAllPagedSafeV11(table,cols,applyFilters){
+  const paged=await fetchAllPagedV11((o)=>applyFilters(sb.from(table).select(cols,o)).order('id'));
+  if(!paged.error) return paged;
+  if(paged.error.code==='42703'||/column .*id.* does not exist/i.test(paged.error.message||'')){
+    console.warn('[C1.22.7] '+table+' has no id column; falling back to a single (capped) read');
+    return await applyFilters(sb.from(table).select(cols));
+  }
+  return paged;
+}
+function friendlyDbErrorV11(err){
+  if(err && (err.code==='57014' || /statement timeout/i.test(err.message||''))){
+    return Object.assign({},err,{message:'انتهت مهلة تنفيذ الطلب على الخادم (الحد 8 ثوانٍ). ضيّق نطاق البحث أو أعد المحاولة، وإن تكرر الخطأ أبلغ المسؤول.'});
+  }
+  return err;
+}
+
+async function runPoolV11(items, limit, fn){
+  let next=0;
+  const workers=Array.from({length:Math.min(limit,items.length)},async()=>{
+    while(next<items.length){ const i=next++; await fn(items[i],i); }
+  });
+  await Promise.all(workers);
+}
+
+let _importFailuresV11=[];
+async function downloadImportFailuresV11(){
+  await ensureXLSXV11();
+  const ws=XLSX.utils.json_to_sheet(_importFailuresV11.map(f=>({'الاسم':f.name||'','الرقم القومي':f.nid||'','العملية':f.kind,'السبب':f.reason})));
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'الإخفاقات');
+  XLSX.writeFile(wb,'تقرير_إخفاقات_الاستيراد.xlsx');
+}
+
 async function applyImportReview(changes, validNew, isAdminUser, btn){
   btn.disabled = true;
   btn.textContent = 'جارِ الحفظ...';
   let updated = 0, requested = 0, inserted = 0;
   const failures = [];
+  const reasonOf = err => (err && (err.code==='23505' || /duplicate key|unique/i.test(err.message||'')))
+    ? 'الرقم القومي مسجّل بالفعل (قد يكون خارج نطاق صلاحياتك)'
+    : ((err && err.message) || 'خطأ غير معروف');
 
+  const jobs = [];
   for(let ci=0; ci<changes.length; ci++){
     const rowChecked = document.querySelector(`.import-row-cb[data-ci="${ci}"]`)?.checked;
     if(!rowChecked) continue;
@@ -9548,7 +9735,22 @@ async function applyImportReview(changes, validNew, isAdminUser, btn){
       payload[d.field] = d.newVal;
     });
     if(Object.keys(payload).length === 0) continue;
+    jobs.push({ c, payload });
+  }
+  const newRows = [];
+  for(let ni=0; ni<validNew.length; ni++){
+    const cb = document.querySelector(`.import-new-cb[data-ni="${ni}"]`);
+    if(!cb || !cb.checked) continue;
+    const cand = validNew[ni];
+    const { governorate_name, ...toInsert } = cand.extracted;
+    newRows.push({ cand, row: { ...toInsert, status: 'pending', created_by: profile.id, source: 'bulk_import' } });
+  }
 
+  const total = jobs.length + newRows.length;
+  let done = 0;
+  const tick = () => { btn.textContent = `جارِ الحفظ... ${done} / ${total}`; };
+
+  await runPoolV11(jobs, 6, async ({ c, payload }) => {
     try {
       if(isAdminUser){
         const { error } = await sb.from('individuals').update(payload).eq('id', c.individual.id);
@@ -9562,33 +9764,43 @@ async function applyImportReview(changes, validNew, isAdminUser, btn){
         requested++;
       }
     } catch(err) {
-      failures.push({ name: c.individual.full_name, message: err.message });
+      failures.push({ name: c.individual.full_name, nid: c.individual.national_id, kind: isAdminUser ? 'تعديل مباشر' : 'طلب تعديل', reason: reasonOf(err) });
     }
-  }
+    done++; tick();
+  });
 
-  for(let ni=0; ni<validNew.length; ni++){
-    const cb = document.querySelector(`.import-new-cb[data-ni="${ni}"]`);
-    if(!cb || !cb.checked) continue;
-    const cand = validNew[ni];
-    const { governorate_name, ...toInsert } = cand.extracted;
-    try {
-      const { error } = await sb.from('individuals').insert({
-        ...toInsert, status: 'pending', created_by: profile.id, source: 'bulk_import'
-      });
-      if(error) throw error;
-      inserted++;
-    } catch(err) {
-      failures.push({ name: cand.extracted.full_name, message: err.message });
+  for(let i=0; i<newRows.length; i+=100){
+    const chunk = newRows.slice(i, i+100);
+    const { error } = await sb.from('individuals').insert(chunk.map(x=>x.row), { defaultToNull: false });
+    if(!error){ inserted += chunk.length; done += chunk.length; tick(); continue; }
+    for(const x of chunk){
+      const { error: e1 } = await sb.from('individuals').insert(x.row);
+      if(e1) failures.push({ name: x.cand.extracted.full_name, nid: x.cand.nid, kind: 'إضافة', reason: reasonOf(e1) });
+      else inserted++;
+      done++; tick();
     }
   }
 
   closeModal('bulkImportModal');
-  showToast(
-    `✅ تحديث مباشر: ${updated} · طلبات تعديل: ${requested} · مضاف جديد: ${inserted}` +
-    (failures.length ? ` · فشل: ${failures.length}` : ''),
-    failures.length ? 'danger' : 'success'
-  );
+  const summary = `تحديث مباشر: ${updated} · طلبات تعديل: ${requested} · مضاف جديد: ${inserted}` + (failures.length ? ` · فشل: ${failures.length}` : '');
+  showToast((failures.length ? '⚠️ ' : '✅ ') + summary, failures.length ? 'danger' : 'success');
   route();
+  if(failures.length){
+    _importFailuresV11 = failures;
+    showModal('bulkImportResultModal', `
+      <div class="modal-box wide">
+        <h3>نتيجة الاستيراد</h3>
+        <p class="sub">${esc(summary)}</p>
+        <div style="max-height:45vh;overflow:auto;border:1px solid #DCE3E1;border-radius:10px;padding:10px;">
+          ${failures.slice(0,300).map(f=>`<div style="border-bottom:1px dashed #DCE3E1;padding:6px 4px;font-size:12.5px;"><b>${esc(f.name||'—')}</b> <span class="subtle nums">(${esc(f.nid||'')})</span> — ${esc(f.kind)}: <span style="color:#B3492F;">${esc(f.reason)}</span></div>`).join('')}
+          ${failures.length>300?'<div class="subtle">… والباقي في ملف التقرير</div>':''}
+        </div>
+        <div class="flex-end" style="margin-top:16px;">
+          <button class="btn btn-outline" onclick="downloadImportFailuresV11()">تنزيل تقرير الإخفاقات (Excel)</button>
+          <button class="btn btn-primary" onclick="closeModal('bulkImportResultModal')">إغلاق</button>
+        </div>
+      </div>`);
+  }
 }
 
 async function exportWorkersExcel(){
@@ -9767,14 +9979,23 @@ async function openQuickAssignModal(workerId){
     return showToast('لا يمكن تسكين فرد غير نشط', 'danger');
   }
 
-  const { data: slots } = await sb.from('structure_slots')
-    .select('*, projects(name)')
-    .eq('status', 'vacant')
-    .order('code')
-    .limit(100);
-
-  if(!slots || slots.length === 0){
-    return showToast('لا توجد أكواد شاغرة', 'danger');
+  let slots;
+  try {
+    if(!state.activeProjectId) throw new Error('حدد مشروعًا قبل إجراء التسكين');
+    const rows=await callRPC('c12024_structure',{
+      p_project_id:state.activeProjectId
+    });
+    if(!Array.isArray(rows)) throw new Error('استجابة الهيكل غير متوقعة');
+    const projectName=state.activeProjectCache?.name ||
+      (typeof projectList!=='undefined' && Array.isArray(projectList)
+        ? projectList.find(p=>p.id===state.activeProjectId)?.name : null) || 'المشروع المحدد';
+    slots=rows.filter(s=>s.status==='vacant'&&!s.individual_id&&c1202AllowGov(s.governorate_id))
+      .sort(c1202SlotOrder).slice(0,100).map(s=>({...s,projects:{name:projectName}}));
+  }catch(err){
+    return showToast('تعذر تحميل الشواغر: '+err.message,'danger');
+  }
+  if(slots.length===0){
+    return showToast('لا توجد أكواد شاغرة متاحة في نطاقك بالمشروع المحدد','danger');
   }
 
   const hasCurrent = Number(worker.active_assignments_count || 0) > 0;
@@ -9852,20 +10073,29 @@ async function submitQuickAssign(workerId){
   }
 
   try {
-    await callRPC('create_assignment', {
-      p_individual_id: workerId,
-      p_project_id: projectId,
-      p_slot_id: slotId,
-      p_role: role,
-      p_start_date: start,
-      p_end_date: end,
-      p_conflict_override: false,
-      p_override_reason: null,
-      p_notes: null
-    });
-
+    const isRequest=['region','office'].includes(profile?.role);
+    if(isRequest){
+      await callRPC('v11_submit_seating_request',{
+        p_type:'assign',p_slot_id:slotId,p_individual_id:workerId,
+        p_assignment_id:null,p_start_date:start,p_end_date:end,
+        p_reason:'طلب تسكين من سجل المشتغلين'
+      });
+      await refreshPendingCounts();
+    }else{
+      await callRPC('create_assignment', {
+        p_individual_id: workerId,
+        p_project_id: projectId,
+        p_slot_id: slotId,
+        p_role: role,
+        p_start_date: start,
+        p_end_date: end,
+        p_conflict_override: false,
+        p_override_reason: null,
+        p_notes: null
+      });
+    }
     closeModal('quickAssignModal');
-    showToast('✅ تم التسكين', 'success');
+    showToast(isRequest?'✅ تم إرسال طلب التسكين للاعتماد':'✅ تم التسكين','success');
     route();
 
   } catch(err) {
@@ -12228,9 +12458,9 @@ async function renderProjectOverviewV11(proj, pg){
       execRes, qualityRes, ledgerRes, advancesRes, trainingRes, assignmentsRes, unitsRes
     ] = await Promise.all([
       c1224ExecutionCounts(proj),
-      sb.from('quality_incidents').select('id,status,calculated_penalty').eq('project_id',proj.id),
-      sb.from('financial_ledger').select('amount,status').eq('project_id',proj.id),
-      sb.from('project_advances').select('amount,status').eq('project_id',proj.id),
+      fetchAllPagedSafeV11('quality_incidents','id,status,calculated_penalty',q=>q.eq('project_id',proj.id)),
+      fetchAllPagedSafeV11('financial_ledger','amount,status',q=>q.eq('project_id',proj.id)),
+      fetchAllPagedSafeV11('project_advances','amount,status',q=>q.eq('project_id',proj.id)),
       sb.from('training_events').select('id,status').eq('project_id',proj.id),
       sb.from('assignments').select('id',{count:'exact',head:true}).eq('project_id',proj.id).eq('status','active'),
       sb.from('work_units').select('id',{count:'exact',head:true}).eq('project_id',proj.id)
@@ -25615,6 +25845,7 @@ async function openFrameAssignmentModalV11(mode,govId){
               <input type="checkbox" id="fr_allow_reassign">
               السماح بإعادة إسناد السجلات المسندة بالفعل
             </label>
+            ${['region','office'].includes(profile.role)?'<p class="sub">إذا كانت الاستمارات مسندة بالفعل، يُرسل الطلب إلى مدير المشروع أو المشرف العام للاعتماد، ولا يُنفذ النقل مباشرة.</p>':''}
           </div>
           <div class="field">
             <label>سبب إعادة الإسناد عند الحاجة</label>
@@ -25644,6 +25875,29 @@ async function submitFrameAssignmentV11(mode,govId){
     if(mode==='selected'){
       const allow=!!document.getElementById('fr_allow_reassign')?.checked;
       const reason=document.getElementById('fr_assign_reason')?.value.trim()||null;
+      const isLocal=['region','office'].includes(profile.role);
+      const currentRows=selectedFrameRowsV11();
+      const anyAssigned=currentRows.some(r=>!!r.current_assignment_id);
+      if(isLocal&&(allow||anyAssigned)){
+        if(!allow) return showToast('فعّل خيار إعادة الإسناد لإرسال الطلب','danger');
+        if(!reason||reason.length<10)return showToast('سبب إعادة الإسناد مطلوب (10 أحرف على الأقل)','danger');
+        if(currentRows.length!==frameV11.selected.size || currentRows.some(r=>!r.current_assignment_id))
+          return showToast('حدد الاستمارات المسندة فقط من الصفحة الحالية لإنشاء طلب نقل واحد','danger');
+        const req=await callRPC('v11_submit_frame_transfer_request',{
+          p_project_id:state.activeProjectCache.id,
+          p_cycle_id:frameCycleIdV11(state.activeProjectCache),
+          p_work_unit_ids:[...frameV11.selected],
+          p_target_assignment_id:assignmentId,
+          p_reason:reason
+        });
+        closeModal('frameAssignV11Modal');
+        resetFrameSelectionV11();
+        showToast('✅ تم إرسال طلب إعادة الإسناد للاعتماد، رقم: '+String(req).slice(0,8),'success');
+        await refreshPendingCounts();
+        c12027InvalidateFrameCache();
+        await renderProjectUnitsTab(state.activeProjectCache);
+        return;
+      }
 
       n=await callRPC('bulk_assign_frame_units_v11',{
         p_project_id:state.activeProjectCache.id,
@@ -25704,6 +25958,27 @@ async function submitFrameUnassignV11(){
   if(reason.length<5) return showToast('أدخل سببًا لا يقل عن 5 أحرف','danger');
 
   try{
+    const isLocal=['region','office'].includes(profile.role);
+    if(isLocal){
+      if(reason.length<10)return showToast('سبب الطلب يجب ألا يقل عن 10 أحرف','danger');
+      const currentRows=selectedFrameRowsV11();
+      if(currentRows.length!==frameV11.selected.size || currentRows.some(r=>!r.current_assignment_id))
+        return showToast('حدد الاستمارات المسندة فقط من الصفحة الحالية لإنشاء طلب إلغاء الإسناد','danger');
+      await callRPC('v11_submit_frame_transfer_request',{
+        p_project_id:state.activeProjectCache.id,
+        p_cycle_id:frameCycleIdV11(state.activeProjectCache),
+        p_work_unit_ids:[...frameV11.selected],
+        p_target_assignment_id:null,
+        p_reason:reason
+      });
+      closeModal('frameUnassignV11Modal');
+      resetFrameSelectionV11();
+      showToast('✅ تم إرسال طلب إلغاء الإسناد للاعتماد','success');
+        await refreshPendingCounts();
+      c12027InvalidateFrameCache();
+      await renderProjectUnitsTab(state.activeProjectCache);
+      return;
+    }
     const n=await callRPC('bulk_unassign_frame_units_v11',{
       p_project_id:state.activeProjectCache.id,
       p_cycle_id:frameCycleIdV11(state.activeProjectCache),
@@ -26819,6 +27094,123 @@ async function commitExecutionImportRC1O(batchId){
   }
 }
 
+// ================================================================
+// C1.22.4: Project requests & audited reassignment history
+// No direct table writes. All reads/decisions use scoped server RPCs.
+// ================================================================
+const v11ProjectRequestUI={section:'seating',reportOffset:0,govId:''};
+function v11ReqDate(v){return v?fmtDateTime(v):'—';}
+function v11ReqStatus(v){return ({pending:'قيد المراجعة',approved:'معتمد',rejected:'مرفوض'})[v]||v||'—';}
+function v11ReqAction(v){return ({reassign:'إعادة إسناد',unassign:'إلغاء إسناد'})[v]||v||'—';}
+async function renderProjectRequestsV11Tab(proj){
+  const host=document.getElementById('projectBody');
+  if(!host)return;
+  const section=v11ProjectRequestUI.section;
+  host.innerHTML='<div class="card"><h3>طلبات وحركات المشروع</h3><p class="sub">جار تحميل البيانات حسب نطاق صلاحيتك…</p></div>';
+  try{
+    let rows=[];
+    if(section==='seating'){
+      const all=await callRPC('v11_list_seating_requests');
+      rows=(all||[]).filter(r=>r.project_id===proj.id);
+    }else if(section==='structure'){
+      rows=await callRPC('v11_list_project_structure_requests',{p_project_id:proj.id,p_limit:200});
+    }else if(section==='frame'){
+      rows=await callRPC('v11_list_project_frame_transfer_requests',{p_project_id:proj.id,p_limit:300});
+    }else if(section==='report'){
+      rows=await callRPC('v11_project_reassignment_report',{
+        p_project_id:proj.id,p_limit:250,p_offset:v11ProjectRequestUI.reportOffset,
+        p_governorate_id:v11ProjectRequestUI.govId?Number(v11ProjectRequestUI.govId):null
+      });
+    }
+    if(state.tab!=='project-detail'||state.projectTab!=='requests'||state.activeProjectId!==proj.id)return;
+    const tabs=[['seating','طلبات التسكين'],['structure','طلبات الهيكل'],['frame','طلبات إعادة الإسناد'],['report','سجل النقل والتقرير']];
+    const nav='<div class="subtabs" style="display:flex;gap:6px;flex-wrap:wrap;margin:12px 0">'+tabs.map(([id,title])=>
+      '<button class="subtab v11-req-subtab '+(section===id?'active':'')+'" data-v11-kind="'+id+'" onclick="v11ProjectReqSwitch(\''+id+'\')">'+title+(id==='report'?'':v11CountChip(v11PendingKind(id,proj.id)))+'</button>').join('')+'</div>';
+    let filter='';
+    if(section==='report'){
+      const govIds=proj.govIds||[];
+      filter='<div class="flex-between" style="gap:8px;flex-wrap:wrap;margin:10px 0"><label>المحافظة: <select class="input" style="width:auto" onchange="v11ProjectReqGov(this.value)"><option value="">جميع محافظات نطاقي</option>'+govIds.map(id=>'<option value="'+Number(id)+'" '+(String(id)===v11ProjectRequestUI.govId?'selected':'')+'>'+esc(govName(id))+'</option>').join('')+'</select></label><button class="btn btn-outline btn-sm" onclick="v11ExportReassignmentHistory()">⬇ تصدير سجل إعادة الإسناد Excel</button></div>';
+    }
+    const heads=section==='report'?
+      ['تاريخ النقل','الاستمارة','المحافظة','كود الباحث السابق / اسمه','كود الباحث الجديد / اسمه','السبب','نفذ بواسطة']:
+      ['نوع الطلب','البيانات','مقدم الطلب','التاريخ','الحالة','الإجراء'];
+    const body=(rows||[]).map(r=>{
+      if(section==='report'){
+        return '<tr><td class="nums">'+esc(v11ReqDate(r.reassigned_at))+'</td><td>'+esc(r.form_code||'—')+'</td><td>'+esc(r.governorate||'—')+'</td><td>'+esc(r.old_researcher_code||'—')+' — '+esc(r.old_researcher_name||'—')+'</td><td>'+esc(r.new_researcher_code||'—')+' — '+esc(r.new_researcher_name||'—')+'</td><td>'+esc(r.reason||'—')+'</td><td>'+esc(r.performed_by||'—')+'</td></tr>';
+      }
+      const kind=section==='seating'?(r.request_type==='end'?'إنهاء تسكين':'تسكين'):
+        section==='structure'?('تعديل هيكل: '+String(r.change_type||'')):v11ReqAction(r.action);
+      const details=section==='seating'?((r.code||'')+' — '+(r.individual||'')+' — '+(r.reason||'')):
+        section==='structure'?JSON.stringify(r.payload||{}):
+        ('عدد الاستمارات: '+r.unit_count+' — '+(r.new_researcher_code||'')+' '+(r.new_researcher_name||'')+' — '+(r.reason||''));
+      const date=r.requested_at||r.created_at;
+      let buttons='<span class="subtle">'+(r.status==='pending'?'بانتظار صاحب الصلاحية':'—')+'</span>';
+      if(r.status==='pending'&&r.can_approve){
+        buttons='<button class="btn btn-success btn-sm" onclick="v11ProjectReqDecide(\''+section+'\',\''+esc(r.id)+'\',true)">اعتماد</button> <button class="btn btn-danger-outline btn-sm" onclick="v11ProjectReqDecide(\''+section+'\',\''+esc(r.id)+'\',false)">رفض</button>';
+      }
+      return '<tr class="'+(v11Notif.activeRequest===r.id?'v11-focused-request':'')+'"><td>'+esc(kind)+'</td><td>'+esc(details)+'</td><td>'+esc(r.requested_by||'—')+'</td><td class="nums">'+esc(v11ReqDate(date))+'</td><td>'+esc(v11ReqStatus(r.status))+'</td><td>'+buttons+'</td></tr>';
+    }).join('');
+    const pager=section==='report'?'<div class="flex-end" style="margin-top:12px"><button class="btn btn-outline btn-sm" '+(v11ProjectRequestUI.reportOffset===0?'disabled':'')+' onclick="v11ProjectReqPage(-1)">السابق</button><span class="sub nums">'+(v11ProjectRequestUI.reportOffset+1)+' - '+(v11ProjectRequestUI.reportOffset+(rows||[]).length)+'</span><button class="btn btn-outline btn-sm" '+((rows||[]).length<250?'disabled':'')+' onclick="v11ProjectReqPage(1)">التالي</button></div>':'';
+    host.innerHTML='<div class="card"><h3>📨 طلبات وحركات المشروع</h3><p class="sub">تسكين · هيكل · إعادة إسناد · تقرير توثيقي. عرض حسب الصلاحية فقط.</p>'+nav+filter+
+      (!rows?.length?'<div class="empty-state">لا توجد بيانات في هذا القسم</div>':
+       '<div class="table-wrap"><table><thead><tr>'+heads.map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>')+pager+'</div>';
+  }catch(e){showError('projectBody',e.message);}
+}
+function v11ProjectReqSwitch(section){v11ProjectRequestUI.section=section;v11ProjectRequestUI.reportOffset=0;renderProjectRequestsV11Tab(state.activeProjectCache);}
+function v11ProjectReqGov(id){v11ProjectRequestUI.govId=String(id||'');v11ProjectRequestUI.reportOffset=0;renderProjectRequestsV11Tab(state.activeProjectCache);}
+function v11ProjectReqPage(delta){v11ProjectRequestUI.reportOffset=Math.max(0,v11ProjectRequestUI.reportOffset+delta*250);renderProjectRequestsV11Tab(state.activeProjectCache);}
+async function v11ProjectReqDecide(section,id,approve){
+  const note=approve?prompt('ملاحظة الاعتماد (اختياري):'):prompt('سبب الرفض (5 أحرف على الأقل):');
+  if(note===null)return;
+  if(!approve&&note.trim().length<5)return showToast('سبب الرفض لا يقل عن 5 أحرف','danger');
+  if(approve&&!confirm('اعتماد الطلب وتنفيذ الإجراء بعد فحوص الخادم؟'))return;
+  try{
+    if(section==='seating')await callRPC('v11_decide_seating_request',{p_request_id:id,p_approve:approve,p_note:note||null});
+    else if(section==='structure')await callRPC('c120_decide_request',{p_kind:'structure',p_id:id,p_approve:approve,p_note:note||null});
+    else if(section==='frame')await callRPC('v11_decide_frame_transfer_request',{p_request_id:id,p_approve:approve,p_note:note||null});
+    else return;
+    showToast('✅ تم تسجيل القرار وفق الصلاحية','success');
+    c12027InvalidateFrameCache();
+    await refreshPendingCounts();
+    await renderProjectRequestsV11Tab(state.activeProjectCache);
+  }catch(e){showToast(e.message,'danger');}
+}
+async function v11ExportReassignmentHistory(){
+ const proj=state.activeProjectCache;
+ if(!proj)return;
+ try{
+   const result=[];let offset=0;
+   for(let j=0;j<100;j++){
+     const batch=await callRPC('v11_project_reassignment_report',{
+       p_project_id:proj.id,p_limit:500,p_offset:offset,
+       p_governorate_id:v11ProjectRequestUI.govId?Number(v11ProjectRequestUI.govId):null
+     });
+     result.push(...(batch||[]));
+     if(!batch||batch.length<500)break;
+     offset+=batch.length;
+     if(j===99)throw new Error('التقرير تجاوز 50,000 حركة؛ اختر محافظة لتقليل الحجم');
+   }
+   if(!result.length)return showToast('لا توجد حركات إعادة إسناد للتصدير','danger');
+   const rows=result.map(r=>({
+     'المشروع':r.project_code||'',
+     'وقت إعادة الإسناد':r.reassigned_at||'',
+     'كود الاستمارة':r.form_code||'',
+     'المحافظة':r.governorate||'',
+     'كود الباحث السابق':r.old_researcher_code||'',
+     'اسم الباحث السابق':r.old_researcher_name||'',
+     'كود الباحث الجديد':r.new_researcher_code||'',
+     'اسم الباحث الجديد':r.new_researcher_name||'',
+     'سبب إعادة الإسناد':r.reason||'',
+     'نفذ بواسطة':r.performed_by||'',
+     'معرف الاستمارة':r.work_unit_id||'',
+     'معرف التسكين السابق':r.old_assignment_id||'',
+     'معرف التسكين الجديد':r.new_assignment_id||''
+   }));
+   exportToExcel([{name:'سجل إعادة الإسناد',rows}],`إعادة_إسناد_${proj.code||'المشروع'}.xlsx`);
+   showToast('✅ تم إعداد التقرير: '+result.length+' حركة','success');
+ }catch(e){showToast(e.message,'danger');}
+}
+
 const c120 = { project:'', gov:'', requestTab:'seating', requestCache:null };
 function c120N(v){return fmtNum(Number(v||0));}
 function c120Date(v){return v?fmtDateTime(v):'—';}
@@ -26850,6 +27242,7 @@ function c120Stat(label,value,accent=''){
 }
 
 let c12026ActiveProjectIds = new Set();
+let v11FastDashboardSequence = 0;
 async function c12026ActiveProjects(projects){
  const rows=Array.isArray(projects)?projects:[];
  const ids=[...new Set(rows.map(x=>x.id).filter(Boolean))].sort();
@@ -26864,6 +27257,8 @@ async function c12026ActiveProjects(projects){
  return rows.filter(x=>active.has(String(x.id)));
 }
 async function renderDashboard(){
+ const renderSequence=++v11FastDashboardSequence;
+ const dashboardT0=performance.now();
  const c=document.getElementById('content');
  if(c.querySelector('.c120-scope-header')){
     const old=c.querySelector('#c12024Busy');if(old)old.remove();
@@ -26885,9 +27280,10 @@ async function renderDashboard(){
     ]);
   }
   if(state.tab!=='dashboard')return;
-  const projects=await c12026ActiveProjects(base.projects);
-  const govs=Array.isArray(base.governorates)?base.governorates:[];
-  if(c120.project && !projects.some(p=>String(p.id)===String(c120.project))){
+  // Start project-status fetch, but DO NOT block KPI display on it.
+  const projectsFuture=c12026ActiveProjects((base||{}).projects);
+  const govs=Array.isArray((base||{}).governorates)?(base||{}).governorates:[];
+  if(c120.project && !(Array.isArray((base||{}).projects)&&(base||{}).projects.some(p=>String(p.id)===String(c120.project)))){
     c120.project='';c120.gov='';return renderDashboard();
   }
   const admin=(profile.role==='admin');
@@ -26899,9 +27295,8 @@ async function renderDashboard(){
        <p class="subtle">المؤشرات حسب المشروعات والمحافظات المصرح لك بها فقط</p></div>
        <span class="badge badge-teal">${esc(roleAr(profile.role))}</span></div>
      <div class="grid cols-2">
-       <div class="field"><label>المشروع</label><select id="c120Project" onchange="c120SetDashboardFilter('project',this.value)">
-       ${c120Option('','جميع مشروعاتي',c120.project)}
-       ${projects.map(p=>c120Option(p.id,p.name,c120.project)).join('')}
+       <div class="field"><label>المشروع</label><select id="c120Project" disabled aria-busy="true" onchange="c120SetDashboardFilter('project',this.value)">
+       <option value="">جارِ تحميل المشروعات النشطة...</option>
        </select></div>
        <div class="field"><label>المحافظة</label><select id="c120Gov" onchange="c120SetDashboardFilter('gov',this.value)">
        ${c120Option('','جميع محافظاتي',c120.gov)}
@@ -26920,12 +27315,38 @@ async function renderDashboard(){
    <div class="card"><h3>اختصارات العمل</h3><div class="action-grid">
      <div class="action-card" onclick="goToProjects()"><div class="icon">📁</div><div class="title">المشروعات</div></div>
      <div class="action-card" onclick="goToGovernorates()"><div class="icon">🏛️</div><div class="title">المحافظات</div></div>
-     ${['admin','region'].includes(profile.role)?`<div class="action-card" onclick="goToRequests()"><div class="icon">📋</div><div class="title">مركز الطلبات</div></div>`:''}
+     ${['admin','region','office','project_manager'].includes(profile.role)?`<div class="action-card" onclick="goToRequests()"><div class="icon">📋</div><div class="title">مركز الطلبات ${v11CountChip((v11Notif.counts||[]).reduce((n,x)=>n+Number(x.pending_count||0),0))}</div></div>`:''}
    </div></div>
    ${admin?`<div class="card"><h3>💰 إجمالي المدفوعات — جميع المشروعات</h3>
     <div class="num nums" style="font-size:28px;color:var(--success)">${c120N(stats.total_paid)} ج.م</div></div>`:''}
    ${admin?`<div class="card" id="c120AdminStats"><h3>📊 إحصائيات المستخدمين — المشرف العام</h3><div class="subtle">جار تحميل إحصائيات المستخدمين...</div></div>`:''}
   `;
+  console.info('[V11 fast] dashboard KPI rendered in '+Math.round(performance.now()-dashboardT0)+'ms');
+  if(performance.now()-dashboardT0>2500)
+    console.warn('[V11 fast] dashboard RPC latency is still high; inspect c120_dashboard timing in Network/Console.');
+  // Populate only the project selector after the dashboard has already painted.
+  projectsFuture.then(projects=>{
+    if(state.tab!=='dashboard'||renderSequence!==v11FastDashboardSequence)return;
+    if(c120.project&&!projects.some(p=>String(p.id)===String(c120.project))){
+      c120.project='';c120.gov='';renderDashboard();return;
+    }
+    const projectSelect=document.getElementById('c120Project');
+    if(!projectSelect)return;
+    projectSelect.innerHTML=c120Option('','جميع مشروعاتي',c120.project)
+      +projects.map(p=>c120Option(p.id,p.name,c120.project)).join('');
+    projectSelect.disabled=false;
+    projectSelect.removeAttribute('aria-busy');
+    console.info('[V11 fast] active-project filter ready in '+Math.round(performance.now()-dashboardT0)+'ms');
+  }).catch(err=>{
+    if(state.tab!=='dashboard'||renderSequence!==v11FastDashboardSequence)return;
+    const projectSelect=document.getElementById('c120Project');
+    if(projectSelect){
+      projectSelect.innerHTML='<option value="">تعذر تحميل المشروعات النشطة</option>';
+      projectSelect.title=err.message||'';
+    }
+    console.warn('[V11 fast] active-project filter:',err);
+    showToast('تعذر تحميل قائمة المشروعات النشطة؛ حدّث اللوحة لإعادة المحاولة','danger');
+  });
   if(admin){
    adminStatsPromise.then(userStats=>{
     const el=document.getElementById('c120AdminStats');
@@ -26954,7 +27375,7 @@ async function renderGovernorates(){
  const c=document.getElementById('content');c.innerHTML='<div class="card"><h3>المحافظات</h3><p class="subtle">جار تحميل المحافظات التابعة لحسابك…</p></div>';
  try {
   const [base,items]=await Promise.all([c120Rpc('c120_dashboard',{}),c120Rpc('c120_governorates',{p_project_id:c120.project||null})]);
-  const projects=await c12026ActiveProjects(base.projects);
+  const projects=await c12026ActiveProjects((base||{}).projects);
   if(state.tab!=='governorates')return;
   if(c120.project&&!projects.some(p=>String(p.id)===String(c120.project))){
     c120.project='';return renderGovernorates();
@@ -26984,7 +27405,7 @@ async function renderGovernorateDetail(){
   ]);
   const g=govs.find(x=>Number(x.id)===govId);
   if(!g)throw new Error('المحافظة خارج نطاق صلاحياتك أو لا تتبع المشروع المختار');
-  const projects=await c12026ActiveProjects(stats.projects);
+  const projects=await c12026ActiveProjects((stats||{}).projects);
   setBreadcrumb([{label:'المحافظات',action:'goToGovernorates()'},{label:g.name}]);
   c.innerHTML=`<div class="card"><div class="flex-between"><h2>🏛️ ${esc(g.name)}</h2>
     <span class="badge badge-teal">نطاقك المعتمد</span></div>
@@ -27000,28 +27421,54 @@ async function renderGovernorateDetail(){
 }
 
 async function renderRequestsHub(){
- if(!['admin','region'].includes(profile.role))return showError('content','لا توجد صلاحية لدخول مركز الطلبات');
+ if(!['admin','project_manager','region','office'].includes(profile.role))
+   return showError('content','لا توجد صلاحية لدخول مركز الطلبات');
  setBreadcrumb([{label:'مركز الطلبات'}]);
- const c=document.getElementById('content');showLoading('content','جارِ تحميل الطلبات ضمن نطاق صلاحياتك...');
+ const c=document.getElementById('content');showLoading('content','جار تحميل الطلبات ضمن صلاحياتك...');
  try{
-  const d=await c120Rpc('c120_requests');c120.requestCache=d;
+  await refreshPendingCounts();
+  const [oldHub,seating]=await Promise.all([
+    ['admin','region'].includes(profile.role)?c120Rpc('c120_requests'):
+       Promise.resolve({seating:[],structure:[],edits:[],transfers:[]}),
+    callRPC('v11_list_seating_requests',{})
+  ]);
+  const frame=(v11Notif.visible||[]).filter(x=>x.kind==='frame')
+    .map(x=>({id:x.request_id,project:x.project_name,project_id:x.project_id,
+      requested_at:x.submitted_at,reason:x.description,individual:x.description,
+      status:'pending',can_approve:!!x.can_approve,code:'طلبات الإسناد'}));
+  const d={...oldHub,seating:seating||[],frame};
+  c120.requestCache=d;
+  const allCategories=[['seating','✋ التسكين والإنهاء'],['frame','🔄 إعادة الإسناد'],
+    ['structure','🏗️ الهيكل'],['edits','✏️ بيانات المشتغل'],['transfers','🔄 نقل المحافظة']];
+  const allowed=allCategories.filter(([k])=>profile.role==='admin' ||
+    (profile.role==='region'&&['seating','frame','structure'].includes(k)) ||
+    (['project_manager','office'].includes(profile.role)&&['seating','frame'].includes(k)));
+  if(!allowed.some(x=>x[0]===c120.requestTab))c120.requestTab='seating';
   const tab=c120.requestTab;
-  const categories=[['seating','✋ التسكين'],['structure','🏗️ الهيكل'],['edits','✏️ بيانات المشتغل'],['transfers','🔄 نقل المحافظة']];
   const items=Array.isArray(d[tab])?d[tab]:[];
-  c.innerHTML=`<div class="card"><h2>📋 مركز الطلبات</h2>
-      <p class="subtle">الطلبات ظاهرة حسب المشروعات والمحافظات والتفويض الفعلي</p>
-      <div class="subtabs">${categories.filter(([k])=>profile.role==='admin'||['seating','structure'].includes(k))
-      .map(([k,l])=>`<button class="subtab ${tab===k?'active':''}" onclick="c120SetRequestsTab('${k}')">${l} (${c120N((d[k]||[]).length)})</button>`).join('')}</div>
-      ${!items.length?'<div class="empty-state">لا توجد طلبات معلّقة في هذا القسم</div>':`<div class="table-wrap"><table>
+  const truncated=tab==='frame'&&v11PendingKind('frame')>frame.length;
+  c.innerHTML=`<div class="card"><h2>📋 مركز الطلبات ${v11CountChip(
+    (v11Notif.counts||[]).reduce((a,r)=>a+Number(r.pending_count||0),0))}</h2>
+      <p class="subtle">الأعداد تشمل الطلبات المعلقة المرئية لحسابك. جرس الإشعارات يحصي فقط ما يستلزم موافقتك.</p>
+      <div class="subtabs">${allowed.map(([k,l])=>`<button class="subtab v11-hub-subtab ${tab===k?'active':''}"
+       data-v11-kind="${k}" onclick="c120SetRequestsTab('${k}')">${l} ${v11CountChip(v11PendingKind(k))}</button>`).join('')}</div>
+      ${truncated?'<div class="notice-box">يعرض هذا المركز أحدث 250 طلبًا. افتح المشروع لعرض بقية طلباته.</div>':''}
+      ${!items.length?'<div class="empty-state">لا توجد طلبات متاحة في هذا القسم</div>':`<div class="table-wrap"><table>
       <thead><tr><th>الطلب / المشروع</th><th>البيانات</th><th>التاريخ</th><th>القرار</th></tr></thead><tbody>
-      ${items.map(r=>`<tr><td><b>${esc(r.project||r.individual||'طلب')}</b>
-      <div class="subtle">${esc(r.code||r.change_type||'')}</div></td>
+      ${items.map(r=>`<tr class="${v11Notif.activeRequest===r.id?'v11-focused-request':''}">
+      <td><b>${esc(r.project||r.individual||'طلب')}</b>
+      <div class="subtle">${tab==='seating'?(r.request_type==='end'?'⏹️ طلب إنهاء':'🔗 طلب تسكين')+' · ':''}${esc(r.code||r.change_type||'')}</div></td>
       <td class="subtle">${esc(r.individual||r.requested_by||'')}
       ${r.changes?`<div>${esc(JSON.stringify(r.changes))}</div>`:''}
-      ${r.payload?`<div>${esc(JSON.stringify(r.payload))}</div>`:''}</td>
+      ${r.payload?`<div>${esc(JSON.stringify(r.payload))}</div>`:''}
+      ${r.reason?`<div>السبب: ${esc(r.reason)}</div>`:''}
+      ${r.review_note?`<div>قرار المراجع: ${esc(r.review_note)}</div>`:''}</td>
       <td class="subtle">${c120Date(r.requested_at)}</td>
-      <td>${r.can_approve===false?'<span class="badge badge-muted">بانتظار المشرف العام</span>':
-        `<button class="btn btn-success btn-sm" onclick="c120DecideRequest('${tab}','${esc(r.id)}',true)">اعتماد</button>
+      <td>${r.status && r.status!=='pending'
+        ? `<span class="badge badge-muted">${r.status==='approved'?'معتمد':'مرفوض'}</span>`
+        : r.can_approve===false
+        ? '<span class="badge badge-muted">بانتظار صاحب الصلاحية</span>'
+        : `<button class="btn btn-success btn-sm" onclick="c120DecideRequest('${tab}','${esc(r.id)}',true)">اعتماد</button>
         <button class="btn btn-danger-outline btn-sm" onclick="c120DecideRequest('${tab}','${esc(r.id)}',false)">رفض</button>`}</td></tr>`).join('')}
       </tbody></table></div>`}</div>`;
  }catch(e){showError('content',e.message);}
@@ -27033,8 +27480,20 @@ async function c120DecideRequest(tab,id,approve){
  if(note===null)return;
  if(!approve&&note.trim().length<5)return showToast('سبب الرفض مطلوب','danger');
  if(approve&&!confirm('تأكيد اعتماد الطلب؟'))return;
- try{await c120Rpc('c120_decide_request',{p_kind:kind,p_id:id,p_approve:approve,p_note:note||null});
-  showToast('تم تسجيل القرار','success');await refreshPendingCounts();renderRequestsHub();
+ try{
+  if(kind==='seating'){
+    await callRPC('v11_decide_seating_request',{
+      p_request_id:id,p_approve:approve,p_note:note||null
+    });
+  }else if(kind==='frame'){
+    await callRPC('v11_decide_frame_transfer_request',{
+      p_request_id:id,p_approve:approve,p_note:note||null
+    });
+  }else{
+    await c120Rpc('c120_decide_request',{p_kind:kind,p_id:id,p_approve:approve,p_note:note||null});
+  }
+  showToast(approve?'✅ تم الاعتماد وتنفيذ الإجراء بعد الفحص':'تم تسجيل الرفض','success');
+  await refreshPendingCounts();renderRequestsHub();
  }catch(e){showToast(e.message,'danger');}
 }
 async function renderSeatingRequests(){c120.requestTab='seating';return renderRequestsHub();}
@@ -27045,16 +27504,46 @@ async function renderAdminTransferRequests(){if(profile.role!=='admin')return sh
  c120.requestTab='transfers';return renderRequestsHub();}
 
 async function refreshPendingCounts(){
- pendingCounts={pending_seating:0,pending_structure:0,pending_edit_requests:0,pending_transfers:0,pending_workforce:0};
- if(!['admin','region'].includes(profile?.role))return;
- try{const d=await c120Rpc('c120_requests');
-   pendingCounts.pending_seating=d.seating?.length||0;
-   pendingCounts.pending_structure=d.structure?.filter(x=>x.can_approve)?.length||0;
-   pendingCounts.pending_edit_requests=d.edits?.length||0;
-   pendingCounts.pending_transfers=d.transfers?.length||0;
- }catch(e){console.warn('C120 scoped pending counts:',e.message);}
+ if(!v11CanNotify())return;
+ if(v11Notif.fetching)return v11Notif.fetching;
+ const userAtStart=profile?.id;
+ v11Notif.fetching=(async()=>{
+  try{
+   const base=await callRPC('v11_pending_approval_inbox',{});
+   let exceptionItems=[];
+   let exceptionWarning='';
+   if(['admin','project_manager'].includes(profile.role)){
+     try{
+       const all=await c120Rpc('c120_exceptions');
+       exceptionItems=(all||[]).filter(x=>x.status==='pending'&&x.can_review===true)
+         .map(x=>({kind:'exceptions',request_id:x.id,project_id:x.project_id||null,
+            project_name:x.project||'',heading:'طلب استثناء',
+            description:(x.individual||'')+' — '+(x.reason||''),submitted_at:x.requested_at||null}));
+     }catch(e){exceptionWarning='تعذر تحميل طلبات الاستثناء مؤقتًا.';console.warn(e);}
+   }
+   if(!profile || profile.id!==userAtStart)return;
+   v11Notif.counts=Array.isArray(base.counts)?base.counts:[];
+   v11Notif.visible=Array.isArray(base.visible_pending)?base.visible_pending:[];
+   v11Notif.exceptions=exceptionItems;
+   v11Notif.notifications=[...(base.notifications||[]),...exceptionItems]
+      .sort((a,b)=>String(b.submitted_at||'').localeCompare(String(a.submitted_at||'')));
+   v11Notif.total=Number(base.approval_total||0)+exceptionItems.length;
+   v11Notif.loaded=true;v11Notif.error='';v11Notif.exceptionWarning=exceptionWarning;
+   v11Notif.lastRefresh=Date.now();
+   pendingCounts={pending_seating:v11PendingKind('seating'),
+     pending_frame:v11PendingKind('frame'),pending_structure:v11PendingKind('structure'),
+     pending_edit_requests:v11PendingKind('edits'),pending_transfers:v11PendingKind('transfers'),
+     pending_workforce:0};
+   v11RefreshVisibleCounters();
+  }catch(e){
+   v11Notif.error='تعذر تحديث قائمة الموافقات؛ العدد المعروض هو آخر نتيجة ناجحة.';
+   v11Notif.lastRefresh=Date.now();
+   console.warn('[V11 approvals] '+e.message);
+   renderHeaderNavigationRC1K();
+  }
+ })();
+ try{await v11Notif.fetching;}finally{v11Notif.fetching=null;}
 }
-
 async function renderExceptions(){
  if(!['admin','project_manager','region','office'].includes(profile.role))return showError('content','غير مصرح');
  const c=document.getElementById('content');showLoading('content','جارِ تحميل الاستثناءات حسب الصلاحيات...');
@@ -27076,7 +27565,7 @@ async function openAddExceptionModal(){
  if(!['admin','region','office'].includes(profile.role))return showToast('غير مصرح','danger');
  try{
  const [base,candidates]=await Promise.all([c120Rpc('c120_dashboard',{}),c120Rpc('c120_exception_candidates',{})]);
- const projects=base.projects||[];
+ const projects=(base||{}).projects||[];
  showModal('addExceptionModal',`<div class="modal-box"><h3>+ طلب استثناء</h3>
   <div class="field"><label>النوع</label><select id="ex_type">
     <option value="conflict">تعارض تكليف</option><option value="assignment">استثناء تكليف</option><option value="other">أخرى</option></select></div>
@@ -27096,7 +27585,7 @@ async function submitAddException(){
  const p_reason=document.getElementById('ex_reason')?.value.trim();
  if(!p_reason||p_reason.length<10)return showToast('سبب الاستثناء مطلوب','danger');
  try{await c120Rpc('c120_create_exception',{p_request_type,p_individual_id,p_project_id,p_reason});
- closeModal('addExceptionModal');showToast('تم إرسال طلب الاستثناء','success');renderExceptions();
+ closeModal('addExceptionModal');showToast('تم إرسال طلب الاستثناء','success');await refreshPendingCounts();renderExceptions();
  }catch(e){showToast(e.message,'danger');}
 }
 async function c120DecideException(id,approve){
@@ -27105,7 +27594,7 @@ async function c120DecideException(id,approve){
  if(!approve&&note.trim().length<5)return showToast('السبب مطلوب','danger');
  if(approve&&!confirm('تأكيد اعتماد الاستثناء؟'))return;
  try{await c120Rpc('c120_decide_exception',{p_id:id,p_approve:approve,p_note:note||null});
- showToast('تم تسجيل قرار الاستثناء','success');renderExceptions();
+ showToast('تم تسجيل قرار الاستثناء','success');await refreshPendingCounts();renderExceptions();
  }catch(e){showToast(e.message,'danger');}
 }
 async function renderConflicts(){
