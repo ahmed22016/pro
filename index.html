@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Unified Work Platform · V11.0 · build C1.22.8 · SECURITY RELEASE CANDIDATE -->
+<!-- Unified Work Platform · V1.0 · internal build C1.22.9 · SMART NOTIFICATIONS RC1 -->
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -7,7 +7,7 @@
 <title>منصة العمل الموحد</title>
 <meta name="theme-color" content="#0F2238">
 <meta name="application-name" content="منصة العمل الموحد">
-<meta name="app-build" content="V11.0-C1.22.8-RC">
+<meta name="app-build" content="V1.0.0-RC1">
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://cdn.sheetjs.com" crossorigin>
@@ -1253,6 +1253,9 @@ td{
 }
 
 
+/* V1.0 concise grouped activity and approval sections */
+.v1-notif-section-head{padding:9px 13px;background:#F1F5F4;border-top:1px solid #DFE7E3;
+ font-size:12px;font-weight:800;color:#42645E}
 /* V11 approval inbox — neutral, compact, scoped counters */
 .v11-notif-host{position:relative;display:inline-flex;align-items:center;z-index:110}
 .v11-bell{position:relative;min-height:38px!important;display:inline-flex;align-items:center;gap:7px!important;background:#fff!important;color:#17324A!important;border:1px solid #D4DFEA!important;border-radius:11px!important;padding:7px 12px!important;cursor:pointer;white-space:nowrap}
@@ -1564,33 +1567,80 @@ function v11CountChip(n){
   n=Number(n||0);
   return n>0?`<span class="v11-tab-count nums" aria-label="${n} طلب معلق">${n>999?'999+':n}</span>`:'';
 }
-function v11CanNotify(){return !!profile&&['admin','project_manager','region','office'].includes(profile.role);}
+// V1.0: all six user roles receive scoped, informational notices.
+const v1Info={unread:0,items:[],loaded:false,error:'',profileId:null};
+function v11CanNotify(){return !!profile;}
+function v1CanApproveNotif(){return !!profile&&['admin','project_manager','region','office'].includes(profile.role);}
+async function v1LoadInfo(){
+  const uid=profile?.id;
+  if(!uid)return;
+  if(v1Info.profileId!==uid){
+    v1Info.profileId=uid;v1Info.unread=0;v1Info.items=[];v1Info.loaded=false;
+  }
+  try{
+    const r=await callRPC('v1_notifications_inbox',{});
+    if(profile?.id!==uid)return;
+    v1Info.unread=Number(r?.unread_count||0);
+    v1Info.items=Array.isArray(r?.items)?r.items:[];
+    v1Info.error='';v1Info.loaded=true;
+  }catch(e){
+    if(profile?.id!==uid)return;
+    v1Info.error='تعذر تحميل إشعارات التكليفات والتغييرات؛ جرّب التحديث.';
+    v1Info.loaded=true;
+    console.warn('[V1 notices]',e.message);
+  }
+}
+async function v1OpenInfo(id,projectId,individualId){
+  try{
+    const saved=await callRPC('v1_mark_notification_read',{p_id:id});
+    if(saved!==true)return showToast('تعذر تأكيد قراءة الإشعار','danger');
+    v1Info.items=v1Info.items.filter(x=>x.id!==id);
+    v1Info.unread=Math.max(0,v1Info.unread-1);
+    v11Notif.open=false;
+    if(projectId)openProject(projectId,'overview');
+    else if(individualId)openWorker(individualId);
+    else renderHeaderNavigationRC1K();
+  }catch(e){showToast(e.message,'danger');}
+}
+
 function v11BellHtml(){
   if(!v11CanNotify())return '';
-  const total=Number(v11Notif.total||0);
-  const rows=(v11Notif.notifications||[]).slice(0,30);
+  const approvals=v1CanApproveNotif()?Number(v11Notif.total||0):0;
+  const unread=Number(v1Info.unread||0);
+  const total=approvals+unread;
+  const approvalRows=(v11Notif.notifications||[]).slice(0,20);
+  const infoRows=(v1Info.items||[]).slice(0,30);
   return `<div class="v11-notif-host" id="v11NotifHost">
-    <button type="button" class="v11-bell" aria-label="الطلبات المطلوبة للموافقة: ${total}"
+    <button type="button" class="v11-bell" aria-label="الإشعارات غير المقروءة والموافقات: ${total}"
       aria-expanded="${v11Notif.open?'true':'false'}" onclick="v11ToggleNotifications()">
-      <span aria-hidden="true">🔔</span><span>الموافقات</span>
+      <span aria-hidden="true">🔔</span><span>الإشعارات</span>
       ${total?v11BellCount(total):''}
     </button>
-    <div id="v11NotifPanel" class="v11-notif-panel" role="region"
-         aria-label="الطلبات المعلقة المطلوبة لموافقتك"
+    <div id="v11NotifPanel" class="v11-notif-panel" role="region" aria-label="إشعارات حسابك"
          style="display:${v11Notif.open?'block':'none'}">
-      <div class="v11-notif-head"><strong>مطلوب موافقتك (${total})</strong>
-        <button type="button" class="btn btn-outline btn-sm" onclick="v11RefreshNotifications()" title="تحديث الإشعارات">↻ تحديث</button></div>
-      ${v11Notif.error?`<div class="notice-box warning" style="margin:0 10px 10px">${esc(v11Notif.error)}</div>`:''}
-      ${v11Notif.exceptionWarning?`<div class="v11-notif-sub" style="padding:0 12px 10px">${esc(v11Notif.exceptionWarning)}</div>`:''}
-      ${!v11Notif.loaded?'<div class="v11-notif-sub" style="padding:16px">جار تحميل الإشعارات...</div>':
-         !rows.length?'<div class="v11-notif-sub" style="padding:16px">لا توجد طلبات تنتظر موافقتك الآن.</div>':
-         rows.map(r=>`<button type="button" class="v11-notif-row"
-           onclick="v11OpenApproval('${esc(r.kind)}','${esc(r.project_id||'')}','${esc(r.request_id||'')}')">
-           <strong>${esc(r.heading||'طلب اعتماد')}</strong>
-           <div class="v11-notif-sub">${esc(r.project_name||'إجراء إداري')} · ${esc(r.description||'')}
-           </div><div class="v11-notif-sub">${esc(r.submitted_at?fmtDateTime(r.submitted_at):'')}</div>
-           </button>`).join('')}
-      ${total>rows.length?`<div class="v11-notif-sub" style="padding:12px">هناك ${total-rows.length} طلبات أخرى؛ افتح مركز الطلبات أو المشروع.</div>`:''}
+      <div class="v11-notif-head"><strong>الإشعارات (${unread}) · الموافقات (${approvals})</strong>
+        <button type="button" class="btn btn-outline btn-sm" onclick="v11RefreshNotifications()">↻ تحديث</button></div>
+      ${v1Info.error?`<div class="notice-box warning" style="margin:0 10px 10px">${esc(v1Info.error)}</div>`:''}
+      <div class="v1-notif-section-head">📨 التكليفات والتغييرات · غير مقروء (${unread})</div>
+      ${!v1Info.loaded?'<div class="v11-notif-sub" style="padding:12px">جار تحميل الإشعارات...</div>':
+        !infoRows.length?'<div class="v11-notif-sub" style="padding:12px">لا توجد إشعارات جديدة.</div>':
+        infoRows.map(r=>`<button type="button" class="v11-notif-row"
+          onclick="v1OpenInfo('${esc(r.id)}','${esc(r.project_id||'')}','${esc(r.individual_id||'')}')">
+          <strong>${r.priority==='important'?'🔸 ':''}${esc(r.title||'تحديث')}</strong>
+          <div class="v11-notif-sub">${esc(r.summary||'')}${Number(r.event_count)>1?' · '+Number(r.event_count)+' تغييرات مجمعة':''}</div>
+          <div class="v11-notif-sub">${esc(r.updated_at?fmtDateTime(r.updated_at):'')}</div>
+        </button>`).join('')}
+      ${unread>infoRows.length?`<div class="v11-notif-sub" style="padding:10px">لديك ${unread-infoRows.length} إشعارات أخرى.</div>`:''}
+      ${v1CanApproveNotif()?`<div class="v1-notif-section-head">✅ مطلوب موافقتك (${approvals})</div>
+        ${v11Notif.error?`<div class="v11-notif-sub" style="padding:9px">${esc(v11Notif.error)}</div>`:''}
+        ${!v11Notif.loaded?'<div class="v11-notif-sub" style="padding:12px">جار تحميل الموافقات...</div>':
+          !approvalRows.length?'<div class="v11-notif-sub" style="padding:12px">لا توجد طلبات تنتظر موافقتك.</div>':
+          approvalRows.map(r=>`<button type="button" class="v11-notif-row"
+            onclick="v11OpenApproval('${esc(r.kind)}','${esc(r.project_id||'')}','${esc(r.request_id||'')}')">
+            <strong>${esc(r.heading||'طلب اعتماد')}</strong>
+            <div class="v11-notif-sub">${esc(r.project_name||'إجراء إداري')} · ${esc(r.description||'')}</div>
+          </button>`).join('')}
+        ${approvals>approvalRows.length?`<div class="v11-notif-sub" style="padding:10px">بقية الطلبات في مركز الطلبات.</div>`:''}`:''}
     </div>
   </div>`;
 }
@@ -3221,7 +3271,7 @@ function renderLoginScreen(){
             <input id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••" dir="ltr" required>
           </div>
           <button class="login-btn" id="btnLogin" type="submit">دخول</button>
-          <div class="auth-build nums">الإصدار 11.0 · C1.22.7</div>
+          <div class="auth-build nums">الإصدار V1.0 · مرشح الاختبار</div>
         </form>
       </section>
     </main>
@@ -27508,6 +27558,12 @@ async function refreshPendingCounts(){
  if(v11Notif.fetching)return v11Notif.fetching;
  const userAtStart=profile?.id;
  v11Notif.fetching=(async()=>{
+  const infoPromise=v1LoadInfo();
+  if(!v1CanApproveNotif()){
+    await infoPromise;
+    if(profile?.id===userAtStart){v11Notif.lastRefresh=Date.now();v11RefreshVisibleCounters();}
+    return;
+  }
   try{
    const base=await callRPC('v11_pending_approval_inbox',{});
    let exceptionItems=[];
@@ -27522,6 +27578,7 @@ async function refreshPendingCounts(){
      }catch(e){exceptionWarning='تعذر تحميل طلبات الاستثناء مؤقتًا.';console.warn(e);}
    }
    if(!profile || profile.id!==userAtStart)return;
+   await infoPromise;
    v11Notif.counts=Array.isArray(base.counts)?base.counts:[];
    v11Notif.visible=Array.isArray(base.visible_pending)?base.visible_pending:[];
    v11Notif.exceptions=exceptionItems;
@@ -27536,6 +27593,7 @@ async function refreshPendingCounts(){
      pending_workforce:0};
    v11RefreshVisibleCounters();
   }catch(e){
+   await infoPromise;
    v11Notif.error='تعذر تحديث قائمة الموافقات؛ العدد المعروض هو آخر نتيجة ناجحة.';
    v11Notif.lastRefresh=Date.now();
    console.warn('[V11 approvals] '+e.message);
