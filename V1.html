@@ -2186,6 +2186,47 @@ body{background:var(--bg);line-height:1.6;}
 @media(max-width:900px){#content:has(.v1-dashboard-view) .v1-e-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:580px){#content:has(.v1-dashboard-view) .v1-e-finance-metrics{grid-template-columns:minmax(0,1fr)}}
 </style>
+
+<style id="platform-copyright-rc88">
+/* Small, accessible credit line; no effect on operational features. */
+.platform-copyright {
+  flex-shrink:0;
+  padding:12px 18px 14px;
+  border-top:1px solid var(--border, #dbe5ef);
+  background:var(--card, #fff);
+  color:var(--muted, #637891);
+  font-family:'Tajawal',Tahoma,sans-serif;
+  font-size:11.5px;
+  font-weight:500;
+  line-height:1.7;
+  text-align:center;
+  overflow-wrap:anywhere;
+}
+.platform-copyright .copyright-names {
+  color:var(--ink-soft, #44566b);
+  font-family:Arial, sans-serif;
+  font-weight:600;
+  font-size:11px;
+  letter-spacing:.08px;
+  direction:ltr;
+  unicode-bidi:isolate;
+}
+.platform-copyright-login {
+  margin-top:12px;
+  padding:13px 2px 0;
+  border-top:1px solid var(--border, #dbe5ef);
+  background:transparent;
+  font-size:10.5px;
+}
+.platform-copyright-login .copyright-names {font-size:10.5px;}
+@media(max-width:600px) {
+  .platform-copyright {padding:10px 9px 12px;font-size:10.5px;}
+  .platform-copyright .copyright-names {font-size:10px;}
+}
+@media print {
+  .platform-copyright {display:none !important;}
+}
+</style>
 </head>
 <body>
 
@@ -4183,6 +4224,7 @@ function renderLoginScreen(){
           </div>
           <button class="login-btn" id="btnLogin" type="submit">دخول</button>
           <div class="auth-build nums">الإصدار V1.0</div>
+          <div class="platform-copyright platform-copyright-login" aria-label="حقوق النشر"><span>© 2026</span> <bdi class="copyright-names">د/ أحمد وائل شوقى &amp; د/ محمد علاء</bdi> <span>— جميع الحقوق محفوظة</span></div>
         </form>
       </section>
     </main>
@@ -4385,6 +4427,7 @@ function renderApp(){
         <div id="headerActions" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
       </header>
       <div id="content"></div>
+      <footer class="platform-copyright" aria-label="حقوق النشر"><span>© 2026</span> <bdi class="copyright-names">د/ أحمد وائل شوقى &amp; د/ محمد علاء</bdi> <span>— جميع الحقوق محفوظة</span></footer>
     </div>
   `;
   
