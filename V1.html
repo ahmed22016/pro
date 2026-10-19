@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Unified Work Platform · V1.0 · build C1.22.11 · release (Egyptian UI) -->
+<!-- Unified Work Platform · V1.0 · build C1.22.11 · Dashboard Scope V2 candidate for staging -->
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -1268,6 +1268,90 @@ td{
 .v11-notif-head{padding:13px;display:flex;align-items:center;justify-content:space-between;gap:7px}
 .v11-focused-request{outline:2px solid #B6C9D9;outline-offset:-2px;background:#F4F8FA}
 
+
+/* RC8.7 — Accessible, opaque notification details (scoped to this modal ONLY).
+   This overrides no global modal styles or business logic. */
+#v1NoticeDetailsModal.modal-overlay {
+  z-index: 12000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 16px;
+  background: rgba(10, 25, 46, .72);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+#v1NoticeDetailsModal > .modal-content {
+  box-sizing: border-box;
+  display: block;
+  position: relative;
+  isolation: isolate;
+  width: min(620px, 100%) !important;
+  min-width: 0;
+  max-height: min(80dvh, 720px);
+  padding: 0;
+  margin: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  color: #172b45 !important;
+  opacity: 1 !important;
+  border: 1px solid #d7e1ec;
+  border-radius: 16px;
+  box-shadow: 0 22px 70px rgba(5, 20, 40, .38);
+  direction: rtl;
+  text-align: right;
+}
+#v1NoticeDetailsModal .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 15px 18px;
+  color: #102b4d;
+  background: #f7fafe !important;
+  border-bottom: 1px solid #e2eaf3;
+}
+#v1NoticeDetailsModal .modal-header h3 {
+  margin: 0;
+  color: #102b4d;
+  font-size: 17px;
+  line-height: 1.5;
+}
+#v1NoticeDetailsModal .modal-close {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+  background: #fff;
+  color: #1b395a;
+  border: 1px solid #cedce8;
+  border-radius: 9px;
+  font-size: 19px;
+}
+#v1NoticeDetailsModal .subtle {
+  color: #61758a;
+}
+#v1NoticeDetailsModal > .modal-content > div:not(.modal-header) {
+  background: #ffffff !important;
+}
+@media (max-width: 640px) {
+  #v1NoticeDetailsModal.modal-overlay {padding: 10px;}
+  #v1NoticeDetailsModal > .modal-content {
+    max-height: calc(100dvh - 24px);
+    width: 100% !important;
+    border-radius: 13px;
+  }
+  #v1NoticeDetailsModal .modal-header {padding: 12px 14px;}
+}
+
 </style>
 <style id="calm-design-c18">
 /* C1.8 visual edition — screen only; operational code and print layouts unchanged. */
@@ -2095,6 +2179,13 @@ body{background:var(--bg);line-height:1.6;}
   #content .structure-tree .node-actions{margin-right:0;}
 }
 </style>
+<style>
+/* Dashboard status-scope RC7: compact six-tile and finance grids only */
+#content:has(.v1-dashboard-view) .v1-e-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+#content:has(.v1-dashboard-view) .v1-e-finance-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:900px){#content:has(.v1-dashboard-view) .v1-e-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:580px){#content:has(.v1-dashboard-view) .v1-e-finance-metrics{grid-template-columns:minmax(0,1fr)}}
+</style>
 </head>
 <body>
 
@@ -2211,14 +2302,14 @@ function v11CountChip(n){
   return n>0?`<span class="v11-tab-count nums" aria-label="${n} طلب معلق">${n>999?'999+':n}</span>`:'';
 }
 // V1.0: all six user roles receive scoped, informational notices.
-const v1Info={unread:0,items:[],loaded:false,error:'',profileId:null};
+const v1Info={unread:0,items:[],loaded:false,error:'',profileId:null,showArchive:false,archived:[]};
 function v11CanNotify(){return !!profile;}
 function v1CanApproveNotif(){return !!profile&&['admin','project_manager','region','office'].includes(profile.role);}
 async function v1LoadInfo(){
   const uid=profile?.id;
   if(!uid)return;
   if(v1Info.profileId!==uid){
-    v1Info.profileId=uid;v1Info.unread=0;v1Info.items=[];v1Info.loaded=false;
+    v1Info.profileId=uid;v1Info.unread=0;v1Info.items=[];v1Info.loaded=false;v1Info.showArchive=false;v1Info.archived=[];
   }
   try{
     const r=await callRPC('v1_notifications_inbox',{});
@@ -2233,17 +2324,176 @@ async function v1LoadInfo(){
     console.warn('[V1 notices]',e.message);
   }
 }
-async function v1OpenInfo(id,projectId,individualId){
-  try{
-    const saved=await callRPC('v1_mark_notification_read',{p_id:id});
-    if(saved!==true)return showToast('تعذر تأكيد قراءة الإشعار','danger');
-    v1Info.items=v1Info.items.filter(x=>x.id!==id);
-    v1Info.unread=Math.max(0,v1Info.unread-1);
-    v11Notif.open=false;
-    if(projectId)openProject(projectId,'overview');
-    else if(individualId)openWorker(individualId);
-    else renderHeaderNavigationRC1K();
-  }catch(e){showToast(e.message,'danger');}
+// RC8.1: scoped, on-demand details. The existing approval queue stays separate.
+async function v1ToggleReadArchive(){
+ v1Info.showArchive=!v1Info.showArchive;
+ if(v1Info.showArchive){
+   try{v1Info.archived=await callRPC('v1_notifications_archive',{p_limit:100});}
+   catch(e){v1Info.showArchive=false;showToast('تعذر تحميل سجل المقروءة: '+e.message,'danger');}
+ }
+ renderHeaderNavigationRC1K();
+}
+
+let v1NoticeOpenDetail=null;
+function v1NoticeValue(v){
+ if(v==null||v==='')return '—';
+ if(typeof v==='boolean')return v?'مفعّل':'غير مفعّل';
+ return String(v);
+}
+function v1NoticeDetailContent(n){
+  const events=Array.isArray(n.events)?n.events:[];
+  const kindLabels={assignment_changed:'تسكين مشتغل',worker_important:'تعديل بيانات مشتغل',worker_digest:'تعديل بيانات مشتغل',account_changed:'تعديل بيانات مستخدم',scope_changed:'تغيير نطاق العمل',project_changed:'تعديل مشروع',project_assigned:'تكليف بمشروع',project_removed:'إنهاء تكليف',project_scope_added:'تغيير نطاق مشروع'};
+  const states={active:'نشط',ended:'منتهٍ',cancelled:'ملغي',inactive:'غير نشط',approved:'معتمد',pending:'قيد المراجعة'};
+  const roles={admin:'مشرف عام',project_manager:'مسؤول مشروع',region:'متابعة إقليم',office:'مسؤول مكتب',committee:'لجنة',followup:'متابعة',reviewer:'مراجع',researcher:'باحث',supervisor:'مشرف'};
+  const prettify=(field,x)=>{
+    if(x==null||x==='')return 'غير محدد';
+    if(typeof x==='boolean')return x?'مفعّل':'غير مفعّل';
+    if(field==='الحالة'||field==='حالة المشتغل')return states[x]||String(x);
+    if(field==='الصلاحية')return roles[x]||String(x);
+    return String(x);
+  };
+  const short=(name,value)=>value==null||value===''?'':`<div style="display:flex;gap:8px;flex-wrap:wrap;line-height:1.7"><span class="subtle">${esc(name)}:</span><b dir="auto">${esc(String(value))}</b></div>`;
+  const line=d=>{
+    const field=String(d.field||'التغيير');
+    const hasBefore=Object.prototype.hasOwnProperty.call(d,'before');
+    const hasAfter=Object.prototype.hasOwnProperty.call(d,'after');
+    const before=hasBefore?prettify(field,d.before):'';
+    const after=hasAfter?prettify(field,d.after):'';
+    const value=d.description?String(d.description):hasBefore&&hasAfter?`من ${before} إلى ${after}`:hasAfter?after:before;
+    if(value.length>115){
+      return `<details style="margin:8px 0;border:1px solid #e3eaf1;border-radius:9px;padding:9px 12px"><summary style="cursor:pointer;font-weight:600">${esc(field)} — عرض التفاصيل</summary><div style="line-height:1.9;margin-top:8px;overflow-wrap:anywhere">${esc(value)}</div></details>`;
+    }
+    return `<div style="padding:7px 0;border-bottom:1px solid #eef2f5;line-height:1.8;overflow-wrap:anywhere"><b>${esc(field)}:</b> ${esc(value)}</div>`;
+  };
+  const first=events.length?events[0]:null;
+  const headerTitle=esc(kindLabels[n.kind]||n.title||'إشعار');
+  const name=first?.changed_user_name||first?.worker_name||first?.project_name||'';
+  const actor=first?.actor_name||'';
+  const blocks=events.slice(0,12).map((e,i)=>{
+    const detail=Array.isArray(e.details)?e.details:[];
+    const ref=e.changed_user_name||e.worker_name||e.project_name||'';
+    const actorName=e.actor_name||'';
+    return `<div style="padding:10px 0;${i?'border-top:1px solid #e6edf4;':''}">
+      ${events.length>1?`<div style="font-weight:600;margin-bottom:8px">تعديل ${i+1}</div>`:''}
+      ${i>0?short('السجل',ref):''}
+      ${i>0?short('بواسطة',actorName):''}
+      ${detail.length?detail.map(line).join(''):'<p class="subtle">لا تتوفر تفاصيل إضافية لهذا الإشعار.</p>'}
+    </div>`;
+  }).join('');
+  return `<div class="modal-content" style="width:min(620px,calc(100vw - 24px));max-width:620px;max-height:76vh;overflow-y:auto;direction:rtl">
+    <div class="modal-header"><h3>🔔 ${headerTitle}</h3><button type="button" class="modal-close" onclick="closeModal('v1NoticeDetailsModal')">×</button></div>
+    <div style="padding:14px 18px;display:grid;gap:10px">
+      ${short('المستخدم أو السجل',name)}
+      ${short('نفّذ الإجراء',actor)}
+      ${short('وقت التعديل',fmtDateTime(first?.event_at||n.updated_at||n.created_at))}
+      <div style="padding:10px 12px;border:1px solid #e2eaf1;border-radius:10px">
+        <strong>ما الذي تغيّر؟</strong>
+        ${events.length?blocks:'<p class="subtle" style="margin:7px 0 0">لا تتوفر تفاصيل أخرى لهذا الإشعار.</p>'}
+        ${events.length>12?`<div class="subtle">توجد تغييرات إضافية في السجل.</div>`:''}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn btn-primary" onclick="v1GotoNoticeRecord()">فتح السجل</button>
+        ${n.read_at?'':`<button type="button" class="btn btn-outline" onclick="v1MarkOneNoticeRead()">تحديد كمقروء</button>`}
+        <button type="button" class="btn btn-outline" onclick="closeModal('v1NoticeDetailsModal')">إغلاق</button>
+      </div>
+    </div>
+  </div>`;
+}
+// RC8.5: on a missing optional RC8.2 RPC only, retain scoped RC8.1 detail access.
+// Never fallback for permission, authentication, scope, or network errors.
+let v1Rc82DetailEndpoint = 'unknown';
+function v1Rc82IsMissingEndpoint(error){
+ const message=String(error?.message||'').toLowerCase();
+ if(!message.includes('v1_notification_detail_rc82'))return false;
+ return /pgrst202|42883|could not find|not found|does not exist|not available|schema cache|غير مثب|لا تطابق هذا الإصدار|غير موجود|لم يتم العثور/.test(message);
+}
+async function v1LoadNoticeDetailCompatible(id){
+ if(v1Rc82DetailEndpoint==='missing'){
+   const base=await callRPC('v1_notification_detail',{p_id:id});
+   return {...base,_rc85Fallback:true};
+ }
+ try{
+   const enriched=await callRPC('v1_notification_detail_rc82',{p_id:id});
+   v1Rc82DetailEndpoint='available';
+   return enriched;
+ }catch(err){
+   if(!v1Rc82IsMissingEndpoint(err))throw err;
+   v1Rc82DetailEndpoint='missing';
+   const base=await callRPC('v1_notification_detail',{p_id:id});
+   return {...base,_rc85Fallback:true};
+ }
+}
+async function v1OpenInfo(id){
+ if(!id)return;
+ showModal('v1NoticeDetailsModal','<div class="modal-content" style="max-width:550px;padding:30px" dir="rtl">جار تحميل تفاصيل الإشعار…</div>');
+ try{
+   const n=await v1LoadNoticeDetailCompatible(id);
+   v1NoticeOpenDetail=n;
+   const modal=document.getElementById('v1NoticeDetailsModal');
+   if(modal)modal.innerHTML=v1NoticeDetailContent(n);
+ }catch(e){
+   const modal=document.getElementById('v1NoticeDetailsModal');
+   if(modal)modal.innerHTML=`<div class="modal-content" style="max-width:550px;padding:24px" dir="rtl"><h3>تعذر عرض التفاصيل</h3><p>${esc(e.message)}</p><button class="btn btn-outline" onclick="closeModal('v1NoticeDetailsModal')">إغلاق</button></div>`;
+ }
+}
+async function v1MarkOneNoticeRead(){
+ const n=v1NoticeOpenDetail;if(!n)return;
+ try{
+  const saved=await callRPC('v1_mark_notification_read',{p_id:n.id});
+  if(saved!==true)throw new Error('لم يتم تغيير حالة الإشعار؛ ربما تمت قراءته بالفعل أو تغيرت صلاحيتك.');
+  v1Info.items=v1Info.items.filter(x=>String(x.id)!==String(n.id));
+  v1Info.unread=Math.max(0,Number(v1Info.unread||0)-1);
+  n.read_at=new Date().toISOString();
+  const modal=document.getElementById('v1NoticeDetailsModal');if(modal)modal.innerHTML=v1NoticeDetailContent(n);
+  renderHeaderNavigationRC1K();v1EThemeNotifications();showToast('تم تحديد الإشعار كمقروء','success');
+ }catch(e){showToast(e.message,'danger');}
+}
+async function v1MarkAllNoticeRead(){
+ if(!v1Info.loaded||!Number(v1Info.unread||0))return;
+ if(!confirm('تحديد جميع إشعارات المعلومات القابلة للوصول كمقروءة؟ لا يشمل ذلك طلبات الموافقة المعلقة.'))return;
+ try{
+  const count=await callRPC('v1_mark_all_notifications_read',{});
+  await v1LoadInfo();
+  renderHeaderNavigationRC1K();v1EThemeNotifications();
+  showToast(`تم تحديد ${Number(count||0)} إشعار كمقروء`, 'success');
+ }catch(e){showToast('تعذر تحديد الكل: '+e.message,'danger');}
+}
+function v1GotoNoticeRecord(){
+ const n=v1NoticeOpenDetail;
+ if(!n)return;
+ const events=Array.isArray(n.events)?n.events:[];
+ const last=events.length?events[events.length-1]:null;
+ closeModal('v1NoticeDetailsModal');v11Notif.open=false;
+ if(last?.entity_type==='profile' && last.entity_id){
+   if(profile?.role==='admin'){
+      state.tab='admin-users';
+      Promise.resolve(route()).then(()=>openEditUserModal(last.entity_id));
+      return;
+   }
+   showToast('بيانات المستخدمين التفصيلية متاحة للمشرف العام فقط','danger');return;
+ }
+ if(last?.entity_type==='individual' && last.entity_id){openWorker(last.entity_id);return;}
+ if(last?.entity_type==='assignment' && n.project_id){
+   state.v1NoticeFocusAssignment=last.entity_id||null;
+   openProject(n.project_id,'assignments');
+   if(state.v1NoticeFocusAssignment){
+     const wanted=state.v1NoticeFocusAssignment;
+     const area=document.getElementById('content');
+     if(area){const ob=new MutationObserver(()=>{
+       const row=Array.from(area.querySelectorAll('[data-v1-notice-assignment-id]')).find(el=>el.getAttribute('data-v1-notice-assignment-id')===wanted);
+       if(row){row.style.outline='2px solid #159673';row.scrollIntoView({block:'center',behavior:'smooth'});ob.disconnect();state.v1NoticeFocusAssignment=null;}
+     });ob.observe(area,{childList:true,subtree:true});window.setTimeout(()=>ob.disconnect(),8000);}
+   }
+   return;
+ }
+ if(n.individual_id){openWorker(n.individual_id);return;}
+ if(n.project_id){openProject(n.project_id,n.kind==='assignment_changed'?'assignments':'overview');return;}
+ if(n.kind==='account_changed'||n.kind==='scope_changed'){
+   if(profile?.role==='admin'){state.tab='admin-users';route();}
+   else {state.tab='dashboard';route();}
+   return;
+ }
+ showToast('لا يوجد رابط مباشر محفوظ لهذا الإشعار؛ راجع تفاصيله أو سجل الإجراءات إن كنت مخولًا.','warning');
 }
 
 function v11BellHtml(){
@@ -2252,7 +2502,7 @@ function v11BellHtml(){
   const unread=Number(v1Info.unread||0);
   const total=approvals+unread;
   const approvalRows=(v11Notif.notifications||[]).slice(0,20);
-  const infoRows=(v1Info.items||[]).slice(0,30);
+  const infoRows=(v1Info.showArchive?v1Info.archived:v1Info.items||[]).slice(0,30);
   return `<div class="v11-notif-host" id="v11NotifHost">
     <button type="button" class="v11-bell" aria-label="الإشعارات غير المقروءة والموافقات: ${total}"
       aria-expanded="${v11Notif.open?'true':'false'}" onclick="v11ToggleNotifications()">
@@ -2262,18 +2512,18 @@ function v11BellHtml(){
     <div id="v11NotifPanel" class="v11-notif-panel" role="region" aria-label="إشعارات حسابك"
          style="display:${v11Notif.open?'block':'none'}">
       <div class="v11-notif-head"><strong>الإشعارات (${unread}) · الموافقات (${approvals})</strong>
-        <button type="button" class="btn btn-outline btn-sm" onclick="v11RefreshNotifications()">↻ تحديث</button></div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><button type="button" class="btn btn-outline btn-sm" onclick="v1MarkAllNoticeRead()" ${unread?'':'disabled'}>✓ جعل كل الإشعارات مقروءة</button><button type="button" class="btn btn-outline btn-sm" onclick="v1ToggleReadArchive()">${v1Info.showArchive?'العودة لغير المقروءة':'سجل المقروءة'}</button><button type="button" class="btn btn-outline btn-sm" onclick="v11RefreshNotifications()">↻ تحديث</button></div></div>
       ${v1Info.error?`<div class="notice-box warning" style="margin:0 10px 10px">${esc(v1Info.error)}</div>`:''}
-      <div class="v1-notif-section-head">📨 التكليفات والتغييرات · غير مقروء (${unread})</div>
+      <div class="v1-notif-section-head">📨 ${v1Info.showArchive?'الإشعارات المقروءة':'التكليفات والتغييرات · غير مقروء ('+unread+')'}</div>
       ${!v1Info.loaded?'<div class="v11-notif-sub" style="padding:12px">جار تحميل الإشعارات...</div>':
-        !infoRows.length?'<div class="v11-notif-sub" style="padding:12px">لا توجد إشعارات جديدة.</div>':
+        !infoRows.length?'<div class="v11-notif-sub" style="padding:12px">لا توجد إشعارات في هذا القسم.</div>':
         infoRows.map(r=>`<button type="button" class="v11-notif-row"
-          onclick="v1OpenInfo('${esc(r.id)}','${esc(r.project_id||'')}','${esc(r.individual_id||'')}')">
+          onclick="v1OpenInfo('${esc(r.id)}')">
           <strong>${r.priority==='important'?'🔸 ':''}${esc(r.title||'تحديث')}</strong>
           <div class="v11-notif-sub">${esc(r.summary||'')}${Number(r.event_count)>1?' · '+Number(r.event_count)+' تغييرات مجمعة':''}</div>
           <div class="v11-notif-sub">${esc(r.updated_at?fmtDateTime(r.updated_at):'')}</div>
         </button>`).join('')}
-      ${unread>infoRows.length?`<div class="v11-notif-sub" style="padding:10px">لديك ${unread-infoRows.length} إشعارات أخرى.</div>`:''}
+      ${!v1Info.showArchive&&unread>infoRows.length?`<div class="v11-notif-sub" style="padding:10px">لديك ${unread-infoRows.length} إشعارات أخرى.</div>`:''}
       ${v1CanApproveNotif()?`<div class="v1-notif-section-head">✅ مطلوب موافقتك (${approvals})</div>
         ${v11Notif.error?`<div class="v11-notif-sub" style="padding:9px">${esc(v11Notif.error)}</div>`:''}
         ${!v11Notif.loaded?'<div class="v11-notif-sub" style="padding:12px">جار تحميل الموافقات...</div>':
@@ -3398,6 +3648,20 @@ async function c12022Request(n,p){
 }
 
 function c1202Restricted(){return ['region','office','followup','committee'].includes(profile?.role);}
+// RC8.4: Read the full project structure through the scoped server RPC for project managers too.
+// Do not add project_manager to c1202Restricted(): that function controls other permissions.
+function c12024UseScopedStructureRead(){
+  return c1202Restricted() || profile?.role === 'project_manager';
+}
+async function c12024ReadStructure(projectId){
+  if(!projectId) throw new Error('حدد المشروع أولًا');
+  return await c12023Cached('full-structure',{project:projectId},async()=>{
+    const {data,error}=await sb.rpc('c12024_structure',{p_project_id:projectId});
+    if(error)throw new Error(error.message||'تعذر تحميل الهيكل');
+    if(!Array.isArray(data))throw new Error('استجابة الهيكل غير متوقعة');
+    return data;
+  },35000);
+}
 function c1202CanFinance(){return !c1202Restricted() && (profile?.role==='admin' || (profile?.role==='project_manager' && state.currentProjectCanManage===true));}
 function c1202CanProjectLog(){return profile?.role==='admin' || profile?.role==='project_manager';}
 function c1202AssertExport(filename){
@@ -3445,6 +3709,13 @@ async function c1202RenderLimitedOverview(proj,pg){
   const complete=Number(metrics.completed_units);
   const allowed=(pg||[]).filter(x=>c1202AllowGov(x.governorate_id)).sort((a,b)=>c1202GovOrder(a.governorate_id,b.governorate_id));
   body.innerHTML=`<div class="v11-note">الأعداد للبيانات المصرح بها في هذا المشروع فقط. تقييد العرض لا يغني عن صلاحيات الخادم.</div>
+  <div class="card" style="margin-bottom:16px;">
+    <h3>📋 تعريف المشروع</h3>
+    <div class="subtle" style="margin-bottom:5px;">الجهة الطالبة</div>
+    <div style="font-weight:700;white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:14px;">${esc(proj.requesting_entity||'غير مسجلة')}</div>
+    <div class="subtle" style="margin-bottom:5px;">وصف المشروع</div>
+    <div style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85;">${esc(proj.description||'لم يسجل وصف للمشروع')}</div>
+  </div>
   <div class="kpi-grid">
     <div class="kpi-card"><div class="num nums">${Number.isFinite(assigned)?fmtNum(assigned):'—'}</div><div class="lbl">تسكينات نشطة</div></div>
     <div class="kpi-card"><div class="num nums">${fmtNum(total)}</div><div class="lbl">أكواد الهيكل</div></div>
@@ -3530,15 +3801,11 @@ function c12023VisibleProjectStructureNotice(){
 }
  
 async function c12024FindSlot(slotId){
- if(c1202Restricted()){
+ if(c12024UseScopedStructureRead()){
   const pid=state.activeProjectId;
   if(!pid)throw new Error('افتح المشروع أولًا');
-  const rows=await c12023Cached('full-structure',{project:pid},async()=>{
-   const {data,error}=await sb.rpc('c12024_structure',{p_project_id:pid});
-   if(error)throw new Error(error.message);
-   return data||[];
-  },35000);
-  return (rows||[]).find(s=>s.id===slotId)||null;
+  const rows=await c12024ReadStructure(pid);
+  return rows.find(s=>s.id===slotId)||null;
  }
  const {data,error}=await sb.from('structure_slots').select('*').eq('id',slotId).maybeSingle();
  if(error)throw new Error(error.message);
@@ -3624,7 +3891,7 @@ async function renderProjectAssignmentsTab(proj){
               </thead>
               <tbody>
                 ${all.map(a => `
-                  <tr>
+                  <tr data-v1-notice-assignment-id="${esc(a.assignment_id||'')}">
                     <td class="subtle">${esc(a.governorate_name || '—')}</td>
                     <td class="nums"><strong>${esc(a.slot_code)}</strong></td>
                     <td>${slotRoleAr(a.role)}</td>
@@ -5761,7 +6028,7 @@ async function submitUserForm(mode, userId){
         p_governorate_ids: ['region','office','committee'].includes(role) ? govIds : []
       });
       if (!saved?.success) throw new Error('لم يؤكد الخادم اكتمال تحديث المستخدم والتدقيق');
-      showToast('✅ تم حفظ بيانات المستخدم ومحافظاته وتسجيل العملية', 'success');
+      showToast(saved.changed===false?'لا توجد تغييرات جديدة للحفظ':'تم حفظ التعديلات الفعلية بنجاح',saved.changed===false?'info':'success');
     }
     
     closeModal('userFormModal');
@@ -8881,8 +9148,20 @@ async function renderProjectDetail(){
   const isStale=()=>routeEpoch!==state.c12023NavEpoch||state.tab!=='project-detail'||state.activeProjectId!==projectAtStart||state.projectTab!==tabAtStart;
   if(!state.activeProjectCache){
     const {data,error}=await sb.from('projects').select('*').eq('id',state.activeProjectId).maybeSingle();
+    if(isStale())return;
     if(error) return showError('content',error.message);
     state.activeProjectCache=data;
+  } else if(!Object.prototype.hasOwnProperty.call(state.activeProjectCache,'description') ||
+            !Object.prototype.hasOwnProperty.call(state.activeProjectCache,'requesting_entity')){
+    // The projects dashboard RPC returns a summary without these two fields.
+    // Fetch only the missing project metadata under existing project SELECT RLS.
+    const {data,error}=await sb.from('projects')
+      .select('description,requesting_entity')
+      .eq('id',state.activeProjectId).maybeSingle();
+    if(isStale())return;
+    if(error)return showError('content','تعذر تحميل تعريف المشروع: '+error.message);
+    if(!data)return showError('content','تعذر قراءة بيانات المشروع ضمن صلاحيات الحساب');
+    state.activeProjectCache={...state.activeProjectCache,...data};
   }
   const proj=state.activeProjectCache;
   if(!proj) return showError('content','المشروع غير موجود');
@@ -8921,9 +9200,14 @@ async function renderProjectDetail(){
   ]);
 
   try{
+    const projectManagerStructure=profile?.role==='project_manager'?c12024ReadStructure(proj.id):null;
     const [slots,filled,pg,canManage,canOperate,cycles]=await Promise.all([
-      c1202Restricted()?Promise.resolve({count:0}):sb.from('structure_slots').select('id',{count:'exact',head:true}).eq('project_id',proj.id),
-      c1202Restricted()?Promise.resolve({count:0}):sb.from('structure_slots').select('id',{count:'exact',head:true}).eq('project_id',proj.id).eq('status','filled'),
+      c1202Restricted()?Promise.resolve({count:0}):projectManagerStructure
+        ? projectManagerStructure.then(rows=>({count:rows.length}))
+        : sb.from('structure_slots').select('id',{count:'exact',head:true}).eq('project_id',proj.id),
+      c1202Restricted()?Promise.resolve({count:0}):projectManagerStructure
+        ? projectManagerStructure.then(rows=>({count:rows.filter(x=>!!x.individual_id).length}))
+        : sb.from('structure_slots').select('id',{count:'exact',head:true}).eq('project_id',proj.id).eq('status','filled'),
       c1202Restricted()?Promise.resolve({data:(scope23.govs||[]).map(g=>({governorate_id:Number(g.id)}))}):sb.from('project_governorates').select('*').eq('project_id',proj.id),
       c1202Restricted()?Promise.resolve(false):callRPC('can_manage_project_finance_v11',{p_project_id:proj.id}),
       c1202Restricted()?c12023Cached('project-operate',{pid:proj.id},()=>callRPC('can_operate_project_v11',{p_project_id:proj.id}),45000):callRPC('can_operate_project_v11',{p_project_id:proj.id}),
@@ -9135,17 +9419,17 @@ async function renderProjectStructureTab(proj, govIds){
   
   try {
 
-    const slots = c1202Restricted()
-      ? await c12023Cached('full-structure',{project:proj.id},async()=>{
-          const {data,error}=await sb.rpc('c12024_structure',{p_project_id:proj.id});
-          if(error)throw new Error(error.message);
-          if(!Array.isArray(data))throw new Error('استجابة الهيكل غير متوقعة');
-          return data;
-        },35000)
-      : (await sb.from('structure_slots').select('*, individuals(full_name, username, national_id, phone)')
-         .eq('project_id',proj.id).order('governorate_id',{ascending:true}).order('code',{ascending:true})).data;
-    (slots||[]).sort(c1202SlotOrder);
-    if(c1202Restricted() && slots.length===0){
+    const slots = c12024UseScopedStructureRead()
+      ? await c12024ReadStructure(proj.id)
+      : await (async()=>{
+          const {data,error}=await sb.from('structure_slots')
+            .select('*, individuals(full_name, username, national_id, phone)')
+            .eq('project_id',proj.id).order('governorate_id',{ascending:true}).order('code',{ascending:true});
+          if(error)throw new Error(error.message||'تعذر تحميل الهيكل');
+          return data||[];
+        })();
+    slots.sort(c1202SlotOrder);
+    if(c12024UseScopedStructureRead() && slots.length===0){
       body.innerHTML='<div class="card"><h3>لا توجد خانات هيكل ظاهرة ضمن نطاق هذا المستخدم</h3><p class="subtle">إذا كانت توجد خانات فعلية، تحقّق من ربط محافظات المشروع بالمستخدم ومن صلاحية دالة c12024_structure. لن نعرض بيانات جزئية أو أصفارًا مضللة.</p></div>';
       return;
     }
@@ -9324,10 +9608,18 @@ async function renderProjectStructureTab(proj, govIds){
 async function openAddStructureSlotModal(projectId, preselectGovId = null){
   if(!isCentral()) return showToast('متاح لمنسق المشروع فقط', 'danger');
   
-  const { data: govs } = await sb.from('governorates').select('id, name').order('name');
-  const { data: existingSlots } = await sb.from('structure_slots')
-    .select('*')
-    .eq('project_id', projectId);
+  const { data: govs, error: govError } = await sb.from('governorates').select('id, name').order('name');
+  if(govError) return showToast('تعذر تحميل المحافظات: '+govError.message,'danger');
+  let existingSlots;
+  try {
+    if(c12024UseScopedStructureRead()) {
+      existingSlots=await c12024ReadStructure(projectId);
+    } else {
+      const {data,error}=await sb.from('structure_slots').select('*').eq('project_id',projectId);
+      if(error)throw error;
+      existingSlots=data||[];
+    }
+  }catch(err){return showToast('تعذر تحميل أكواد الهيكل: '+err.message,'danger');}
   
   const modalHtml = `
     <div class="modal-box">
@@ -9394,11 +9686,18 @@ async function submitAddStructureSlot(projectId){
 
   let code = codeInput;
   if(!code){
-    const { data: existing } = await sb.from('structure_slots')
-      .select('code')
-      .eq('project_id', projectId)
-      .eq('governorate_id', parseInt(govId));
-    
+    let existing;
+    try {
+      if(c12024UseScopedStructureRead()) {
+        existing=(await c12024ReadStructure(projectId)).filter(s=>Number(s.governorate_id)===Number(govId));
+      }else{
+        const r=await sb.from('structure_slots')
+          .select('code').eq('project_id',projectId).eq('governorate_id',parseInt(govId));
+        if(r.error)throw r.error;
+        existing=r.data||[];
+      }
+    }catch(err){return showToast('تعذر احتساب كود جديد: '+err.message,'danger');}
+
     const count = (existing || []).length + 1;
     const gCode = govCode(parseInt(govId));
     code = `${gCode}${String(count).padStart(2, '0')}`;
@@ -9417,6 +9716,7 @@ async function submitAddStructureSlot(projectId){
     if(error) throw error;
     
     closeModal('addSlotModal');
+    c12024InvalidateStructure(projectId);
     showToast('✅ تمت إضافة الكود', 'success');
     renderProjectStructureTab(state.activeProjectCache, state.activeProjectCache.govIds || []);
   } catch(err) {
@@ -13191,6 +13491,13 @@ async function renderProjectOverviewV11(proj, pg){
       : `تنبيه: مجموع الحالات (${fmtNum(ex.status_count)}) يختلف عن المستهدف المسند (${fmtNum(target)}). راجع تبويب أرصدة التنفيذ.`;
 
     body.innerHTML = `
+      <div class="card" style="margin-bottom:16px;">
+        <h3>📋 تعريف المشروع</h3>
+        <div class="subtle" style="margin-bottom:5px;">الجهة الطالبة</div>
+        <div style="font-weight:700;white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:14px;">${esc(proj.requesting_entity||'غير مسجلة')}</div>
+        <div class="subtle" style="margin-bottom:5px;">وصف المشروع</div>
+        <div style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85;">${esc(proj.description||'لم يسجل وصف للمشروع')}</div>
+      </div>
       <div class="v11-note">
         هذه النسخة لا تجمع الاستمارات الميدانية. المتابعة تبدأ بعد الإسناد وتعتمد على
         <strong>أرصدة التنفيذ الفعلية من تقرير الباحثين</strong> والحسابات الإدارية والمالية.
@@ -13247,6 +13554,8 @@ async function renderProjectSetupV11(proj){
     b.innerHTML=`<div class="card"><h3>بيانات المشروع</h3>
       <table><tr><td>الاسم</td><td>${esc(proj.name)}</td></tr>
       <tr><td>الكود</td><td>${esc(proj.code)}</td></tr>
+      <tr><td>الجهة الطالبة</td><td style="white-space:pre-wrap;overflow-wrap:anywhere;">${esc(proj.requesting_entity||'غير مسجلة')}</td></tr>
+      <tr><td>وصف المشروع</td><td style="white-space:pre-wrap;overflow-wrap:anywhere;">${esc(proj.description||'لم يسجل وصف للمشروع')}</td></tr>
       <tr><td>الفترة</td><td>${fmtDate(proj.start_date)} → ${fmtDate(proj.end_date)}</td></tr>
       <tr><td>الحالة</td><td>${esc(proj.status||'—')}</td></tr></table></div>`;
     return;
@@ -13269,6 +13578,8 @@ async function renderProjectSetupV11(proj){
           <table style="font-size:13px;">
             <tr><td class="subtle">الكود</td><td class="nums">${esc(proj.code)}</td></tr>
             <tr><td class="subtle">الاسم</td><td><strong>${esc(proj.name)}</strong></td></tr>
+            <tr><td class="subtle">الجهة الطالبة</td><td style="white-space:pre-wrap;overflow-wrap:anywhere;">${esc(proj.requesting_entity||'غير مسجلة')}</td></tr>
+            <tr><td class="subtle">وصف المشروع</td><td style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85;">${esc(proj.description||'لم يسجل وصف للمشروع')}</td></tr>
             <tr><td class="subtle">الفترة العامة</td><td class="nums">${fmtDate(proj.start_date)} → ${fmtDate(proj.end_date)}</td></tr>
             <tr><td class="subtle">طبيعة المشروع</td><td>
               <span class="badge ${proj.project_mode==='recurring'?'badge-teal':'badge-navy'}">${proj.project_mode==='recurring'?`دوري · ${proj.default_cycle_days||'—'} يوم`:'عادي / مرة واحدة'}</span>
@@ -27916,12 +28227,12 @@ async function v11ExportReassignmentHistory(){
  }catch(e){showToast(e.message,'danger');}
 }
 
-const c120 = { project:'', gov:'', requestTab:'seating', requestCache:null };
+const c120 = { project:'', gov:'', status:'active', requestTab:'seating', requestCache:null };
 function c120N(v){return fmtNum(Number(v||0));}
 function c120Date(v){return v?fmtDateTime(v):'—';}
 function c120Option(v,label,selected){return `<option value="${esc(v)}" ${String(v)===String(selected)?'selected':''}>${esc(label)}</option>`;}
 async function c120Rpc(name, args={}){
- if(['c120_dashboard','c120_governorates'].includes(name))return c12023ReadRpc(name,args);
+ if(['c120_dashboard','c120_governorates','v1_dashboard_scope_v2'].includes(name))return c12023ReadRpc(name,args);
  const started=performance.now();
  const readOnly=['c120_dashboard','c120_governorates','c120_requests',
   'c120_exceptions','c120_conflicts','c120_exception_candidates'].includes(name);
@@ -27954,11 +28265,12 @@ function v1EThemeNotifications(){
  const list=[...approvals,...infos].slice(0,5);
  const counter=document.getElementById('v1-e-dashboard-alert-count');if(counter)counter.textContent=c120N((Number(v1Info.unread)||0)+(v1CanApproveNotif()?Number(v11Notif.total)||0:0));
  if(!list.length){el.innerHTML='<div class="v1-e-note">لا توجد إشعارات أو موافقات معلقة ضمن صلاحياتك الآن.</div>';return;}
- el.innerHTML=list.map(r=>`<button class="v1-e-feed-row" onclick="${r.type==='approval'?'v11ToggleNotifications()':`v1OpenInfo('${esc(r.id)}','${esc(r.project||'')}','${esc(r.individual||'')}')`}"><span class="v1-e-feed-ico">${r.icon}</span><span style="flex:1;min-width:0"><b>${esc(r.title)}</b><small>${esc(r.description)}</small></span><em>${r.type==='approval'?'يلزم إجراء':'جديد'}</em></button>`).join('');
+ el.innerHTML=list.map(r=>`<button class="v1-e-feed-row" onclick="${r.type==='approval'?'v11ToggleNotifications()':`v1OpenInfo('${esc(r.id)}')`}"><span class="v1-e-feed-ico">${r.icon}</span><span style="flex:1;min-width:0"><b>${esc(r.title)}</b><small>${esc(r.description)}</small></span><em>${r.type==='approval'?'يلزم إجراء':'جديد'}</em></button>`).join('');
 }
 function v1EThemeRenderProjectRows(items){
  const box=document.getElementById('v1-e-project-rows');if(!box)return;
- box.innerHTML=items.length?items.slice(0,8).map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.name)}</b></td><td><span class="v1-e-status">● نشط</span></td><td><button class="v1-e-inline-link" onclick="openProject('${esc(p.id)}','overview')">فتح مساحة العمل ←</button></td></tr>`).join(''):'<tr><td colspan="4" class="v1-e-note">لا توجد مشروعات نشطة متاحة ضمن صلاحياتك.</td></tr>';
+ const statusText={active:'نشط',draft:'مسودة',planning:'تخطيط',finished:'منتهي',closed:'منتهي'};
+ box.innerHTML=items.length?items.slice(0,8).map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.name)}</b></td><td><span class="v1-e-status">● ${esc(statusText[p.status]||p.status||'—')}</span></td><td><button class="v1-e-inline-link" onclick="openProject('${esc(p.id)}','overview')">فتح مساحة العمل ←</button></td></tr>`).join(''):'<tr><td colspan="4" class="v1-e-note">لا توجد مشروعات مطابقة للفلاتر ضمن صلاحياتك.</td></tr>';
 }
 function c120Stat(label,value,accent=''){
  return `<div class="kpi-card ${accent}"><div class="num nums">${c120N(value)}</div><div class="lbl">${esc(label)}</div></div>`;
@@ -27980,150 +28292,168 @@ async function c12026ActiveProjects(projects){
  return rows.filter(x=>active.has(String(x.id)));
 }
 async function renderDashboard(){
- const renderSequence=++v11FastDashboardSequence;
- const dashboardT0=performance.now();
- const c=document.getElementById('content');
- if(c.querySelector('.c120-scope-header')){
-    const old=c.querySelector('#c12024Busy');if(old)old.remove();
-    c.insertAdjacentHTML('afterbegin','<div id="c12024Busy" class="notice-box" role="status">جار تحديث المؤشرات حسب الاختيار…</div>');
-  }else{
-    c.innerHTML='<div class="card" style="padding:20px"><h3>لوحة المتابعة التشغيلية</h3><p class="subtle">جار جلب المؤشرات الخاصة بنطاق عملك…</p><div class="spinner" style="width:20px;height:20px"></div></div>';
-  }
- try {
-  const args={p_project_id:c120.project||null,p_governorate_id:c120.gov?Number(c120.gov):null};
-
-  let base, stats;
-  if(!args.p_project_id && !args.p_governorate_id){
-    base = await c120Rpc('c120_dashboard', {});
-    stats = base;
+  const seq=++v11FastDashboardSequence;
+  const started=performance.now();
+  const host=document.getElementById('content');
+  if(host.querySelector('.c120-scope-header')){
+    host.insertAdjacentHTML('afterbegin','<div id="c12024Busy" class="notice-box" role="status">جار تحديث مؤشرات النطاق المختار…</div>');
   } else {
-    [base,stats] = await Promise.all([
-      c120Rpc('c120_dashboard', {}),
-      c120Rpc('c120_dashboard', args)
-    ]);
+    host.innerHTML='<div class="card" style="padding:20px"><h3>لوحة المتابعة التشغيلية</h3><p class="subtle">جار تحميل مؤشرات المشروعات النشطة من قاعدة البيانات…</p><div class="spinner" style="width:20px;height:20px"></div></div>';
   }
-  if(state.tab!=='dashboard')return;
-  // Start project-status fetch, but DO NOT block KPI display on it.
-  const projectsFuture=c12026ActiveProjects((base||{}).projects);
-  const govs=Array.isArray((base||{}).governorates)?(base||{}).governorates:[];
-  if(c120.project && !(Array.isArray((base||{}).projects)&&(base||{}).projects.some(p=>String(p.id)===String(c120.project)))){
-    c120.project='';c120.gov='';return renderDashboard();
-  }
-  const admin=(profile.role==='admin');
-
-  const adminStatsPromise=admin?callRPC('get_user_stats').catch(()=>null):null;
-  const assigned=Number(stats.active_assignments||0),assignAll=Number(stats.assignments||0);
-  const units=Number(stats.units||0),completed=Number(stats.completed_units||0);
-  const approvalCount=v1CanApproveNotif()?Number(v11Notif.total||0):0;
-  const pct=v1EThemePercentage(completed,units);
-  const activeProjectCount=Number(stats.active_projects||0),allProjectCount=Math.max(activeProjectCount,Number(stats.projects_count??(Array.isArray((base||{}).projects)?base.projects.length:0)));
-  const projectPct=v1EThemePercentage(activeProjectCount,allProjectCount);
-  c.innerHTML=`<div class="v1-dashboard-view">
-    <section class="v1-e-hero"><div class="v1-e-hero-inner">
-      <span class="v1-e-hero-label">الإصدار التشغيلي V1.0 · لوحة تشغيلية حية</span>
-      <h2>مرحبًا بك في منصة العمل الموحد</h2>
-      <p>أهلًا ${esc(profile.full_name||roleAr(profile.role))}، هذه مؤشرات مشروعاتك وأعمالك المصرح بها؛ الأرقام تُقرأ من قاعدة البيانات وليست بيانات العرض التوضيحي.</p>
-    </div></section>
-    <section class="v1-e-kpis" aria-label="مؤشرات العمل الحقيقية">
-      ${v1EThemeKpi('المشتغلون النشطون',stats.active_workers,'👥','#e39718','المشتغلون داخل نطاقك')}
-      ${v1EThemeKpi('المشروعات النشطة',stats.active_projects,'📊','#1269bf','المشروعات المتاحة بحالة نشطة')}
-      ${v1EThemeKpi('التسكينات النشطة',stats.active_assignments,'🔗','#078a70','التسكينات المرتبطة بالمشروع')}
-      ${v1EThemeKpi('وحدات الإطار',stats.units,'🗂️','#7952c7','إجمالي وحدات العمل المتاحة')}
-      ${v1EThemeKpi('طلبات تنتظر موافقتك',approvalCount,'📋','#ce4a52','العدد يظهر بعد تحديث الإشعارات')}
-    </section>
-    <div class="v1-e-actions" aria-label="إجراءات سريعة">
-      <strong>⚡ إجراءات سريعة</strong>
-      ${['admin','region','followup','office','project_manager'].includes(profile.role)?'<button class="v1-e-action primary" onclick="goToProjects()">📁 مساحات عمل المشروعات</button>':''}
-      ${['admin','region','followup','office','committee'].includes(profile.role)?'<button class="v1-e-action" onclick="goToWorkers()">👥 سجل المشتغلين</button>':''}
-      ${['admin','region','office','project_manager'].includes(profile.role)?'<button class="v1-e-action" onclick="goToRequests()">📋 مركز الطلبات</button>':''}
-      <button class="v1-e-action" onclick="goToGovernorates()">🏛️ المحافظات</button>
-      <button class="v1-e-action" onclick="v11ToggleNotifications()">🔔 الإشعارات <span id="v1-e-dashboard-alert-count" aria-live="polite">${c120N(approvalCount+Number(v1Info.unread||0))}</span></button>
-      <button class="v1-e-action" onclick="c12023RefreshDashboard()">↻ تحديث البيانات</button>
-    </div>
-    <section class="v1-e-panel v1-e-scope c120-scope-header" aria-label="فلاتر لوحة المتابعة">
-      <div><strong class="v1-e-section-title">🔎 نطاق العرض</strong><div class="v1-e-scope-caption">المشروع والمحافظة حسب صلاحيتك</div></div>
-      <div class="field"><label for="c120Project">المشروع</label><select id="c120Project" disabled aria-busy="true" onchange="c120SetDashboardFilter('project',this.value)"><option value="">جار تحميل المشروعات النشطة…</option></select></div>
-      <div class="field"><label for="c120Gov">المحافظة</label><select id="c120Gov" onchange="c120SetDashboardFilter('gov',this.value)">${c120Option('','جميع محافظاتي',c120.gov)}${govs.map(g=>c120Option(g.id,g.name,c120.gov)).join('')}</select></div>
-      <span class="v1-e-status" style="white-space:nowrap">${esc(roleAr(profile.role))}</span>
-    </section>
-    <div class="v1-e-layout">
-       <section class="v1-e-panel">
-         <div class="v1-e-panel-head"><h3 class="v1-e-section-title">📁 مشروعاتي النشطة</h3><button class="v1-e-inline-link" onclick="goToProjects()">عرض المشروعات ←</button></div>
-         <div class="v1-e-table-wrap"><table class="v1-e-table"><thead><tr><th>م</th><th>المشروع</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody id="v1-e-project-rows"><tr><td colspan="4" class="v1-e-small">جار تحميل أسماء المشروعات حسب صلاحياتك…</td></tr></tbody></table></div>
-       </section>
-       <section class="v1-e-panel">
-         <div class="v1-e-panel-head"><h3 class="v1-e-section-title">📈 توزيع المشروعات حسب الحالة</h3><span class="v1-e-small">من إجمالي المشروعات المسموح بها</span></div>
-         <div class="v1-e-donut"><div class="v1-e-ring" style="--pct:${projectPct};--ring:#078b73"><span class="v1-e-ring-value">${c120N(activeProjectCount)}<small>مشروع نشط</small></span></div>
-          <div class="v1-e-legend"><div class="v1-e-legend-line"><span class="v1-e-dot" style="--dot:#078b73"></span>نشطة <b>${c120N(activeProjectCount)}</b></div><div class="v1-e-legend-line"><span class="v1-e-dot" style="--dot:#e0e7ef"></span>حالات أخرى <b>${c120N(Math.max(0,allProjectCount-activeProjectCount))}</b></div><div class="v1-e-legend-line"><span>إجمالي المشروعات</span><b>${c120N(allProjectCount)}</b></div></div>
-         </div>
-       </section>
-    </div>
-    <div class="v1-e-layout">
-       <section class="v1-e-panel">
-         <div class="v1-e-panel-head"><h3 class="v1-e-section-title">🔔 التنبيهات والموافقات</h3><button class="v1-e-inline-link" onclick="v11ToggleNotifications()">فتح صندوق الإشعارات ←</button></div>
-         <div class="v1-e-feed" id="v1-e-feed"><div class="v1-e-note">جار تحميل إشعاراتك الشخصية وما ينتظر قرارك…</div></div>
-       </section>
-       <section class="v1-e-panel">
-         <div class="v1-e-panel-head"><h3 class="v1-e-section-title">✅ حالة استكمال وحدات الإطار</h3><span class="v1-e-small">بحسب حالة سجل وحدات العمل</span></div>
-         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><strong style="font:800 29px 'Readex Pro','Tajawal',sans-serif;color:#087c68">${c120N(pct)}%</strong><span class="v1-e-small">${c120N(completed)} وحدة بحالة «مكتمل» من ${c120N(units)} وحدة</span></div>
-         <div class="v1-e-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="نسبة الوحدات المكتملة"><div class="v1-e-progress-fill" style="width:${pct}%"></div></div>
-         <div class="v1-e-metrics"><div class="v1-e-mini"><b>${c120N(stats.active_assignments)}</b><span>تسكينات نشطة</span></div><div class="v1-e-mini"><b>${c120N(stats.assignments)}</b><span>إجمالي التسكينات</span></div><div class="v1-e-mini"><b>${c120N(stats.completed_units)}</b><span>وحدات بحالة مكتمل</span></div><div class="v1-e-mini"><b>${c120N(Math.max(0,units-completed))}</b><span>وحدات بحالات أخرى</span></div></div>
-         <p class="v1-e-small" style="margin:12px 0 0">هذا المؤشر مبني على حالة <code>work_units.status</code> فقط، وليس الرصيد المالي أو حالات الاستيفاء الميداني.</p>
-       </section>
-    </div>
-    ${admin?`<section class="v1-e-panel"><div class="v1-e-panel-head"><h3 class="v1-e-section-title">💰 إجمالي المدفوعات المسجلة</h3><span class="v1-e-small">بحسب الدالة المالية الحالية للمشرف العام فقط</span></div><div style="font:800 26px 'Readex Pro',sans-serif;color:#087b62">${c120N(stats.total_paid)} ج.م</div></section>`:''}
-    ${admin?'<section class="v1-e-panel" id="c120AdminStats"><h3 class="v1-e-section-title">👤 إحصائيات حسابات المنصة</h3><p class="v1-e-small">جار تحميل بيانات المستخدمين…</p></section>':''}
+  try {
+    const admin=profile?.role==='admin';
+    if(!admin)c120.status='active';
+    const validStatuses=['active','draft','finished','all'];
+    if(!validStatuses.includes(c120.status))c120.status='active';
+    const scopeBase={p_project_id:null,p_governorate_id:null,p_project_status:c120.status};
+    const scopeSelected={p_project_id:c120.project||null,p_governorate_id:c120.gov?Number(c120.gov):null,p_project_status:c120.status};
+    const baseCall=c120Rpc('v1_dashboard_scope_v2',scopeBase);
+    const selectedCall=(scopeSelected.p_project_id||scopeSelected.p_governorate_id)
+      ?c120Rpc('v1_dashboard_scope_v2',scopeSelected):baseCall;
+    const [base,stats]=await Promise.all([baseCall,selectedCall]);
+    if(state.tab!=='dashboard'||seq!==v11FastDashboardSequence)return;
+    if(!base || !stats || stats.scope_status!==c120.status || !Array.isArray(base.projects))
+      throw new Error('استجابة مؤشرات لوحة المتابعة غير مكتملة؛ لا يمكن عرض تقديرات غير مؤكدة.');
+    const projects=base.projects;
+    const projectIds=new Set(projects.map(p=>String(p.id)));
+    c12026ActiveProjectIds=projectIds;
+    if(c120.project&&!projectIds.has(String(c120.project))){
+      c120.project='';c120.gov='';return renderDashboard();
+    }
+    const govs=Array.isArray(base.governorates)?base.governorates:[];
+    const adminStatsPromise=admin?callRPC('get_user_stats').catch(()=>null):null;
+    const projectCount=Number(stats.projects_count||0);
+    const projectActive=Number(stats.active_projects||0);
+    const units=Number(stats.units||0);
+    const target=Number(stats.target_forms||0);
+    const completed=Number(stats.completed_forms||0);
+    // Field completion percentages need two decimal places: a small,
+    // non-zero percentage must never be displayed as 0%.
+    const pct=target>0?Math.round(Math.min(100,Math.max(0,completed/target*100))*100)/100:0;
+    const framePct=units>0?Math.round(Math.min(100,Math.max(0,completed/units*100))*100)/100:0;
+    const approvalCount=v1CanApproveNotif()?Number(v11Notif.total||0):0;
+    const projectPct=v1EThemePercentage(projectActive,projectCount);
+    const statusNames={active:'المشروعات النشطة',draft:'المشروعات المسودة والتخطيط',finished:'المشروعات المنتهية',all:'جميع حالات المشروعات'};
+    const statusTitle=statusNames[c120.status]||'المشروعات النشطة';
+    const cashAccessible=admin&&stats.financial_scope_supported===true&&Number.isFinite(Number(stats.total_paid));
+    const cashNote=c120.gov?'لا يمكن توزيع الصرف المسجل على المحافظات دون مصدر مالي يحدد المحافظة لكل عملية.':'حسب حالات المشروعات المحددة، ويشمل السلف المصروفة والمدفوعات الأخرى.';
+    host.innerHTML=`<div class="v1-dashboard-view">
+      <section class="v1-e-hero"><div class="v1-e-hero-inner">
+        <span class="v1-e-hero-label">V1.0 · لوحة متابعة محددة بالنطاق</span>
+        <h2>مرحبًا بك في منصة العمل الموحد</h2>
+        <p>أهلًا ${esc(profile.full_name||roleAr(profile.role))}، تعرض هذه اللوحة مؤشرات ${esc(statusTitle)} ضمن صلاحيات حسابك، من مصادر التشغيل الفعلية.</p>
+      </div></section>
+      <section class="v1-e-panel v1-e-scope c120-scope-header" aria-label="فلاتر لوحة المتابعة">
+        <div><strong class="v1-e-section-title">🔎 نطاق التقارير</strong><div class="v1-e-scope-caption">تُطبّق الفلاتر على جميع مؤشرات التشغيل داخل الخادم</div></div>
+        ${admin?`<div class="field"><label for="c120ProjectStatus">حالة المشروعات</label><select id="c120ProjectStatus" onchange="c120SetDashboardFilter('status',this.value)">
+          ${c120Option('active','النشطة',c120.status)}${c120Option('draft','مسودة / تخطيط',c120.status)}${c120Option('finished','المنتهية',c120.status)}${c120Option('all','كل الحالات',c120.status)}
+        </select></div>`:'<span class="v1-e-status">المشروعات النشطة فقط</span>'}
+        <div class="field"><label for="c120Project">المشروع</label><select id="c120Project" onchange="c120SetDashboardFilter('project',this.value)">
+          ${c120Option('','جميع المشروعات في النطاق',c120.project)}${projects.map(p=>c120Option(p.id,p.name,c120.project)).join('')}
+        </select></div>
+        <div class="field"><label for="c120Gov">المحافظة</label><select id="c120Gov" onchange="c120SetDashboardFilter('gov',this.value)">
+          ${c120Option('','جميع المحافظات في النطاق',c120.gov)}${govs.map(g=>c120Option(g.id,g.name,c120.gov)).join('')}
+        </select></div>
+        <span class="v1-e-status" style="white-space:nowrap">${esc(roleAr(profile.role))}</span>
+      </section>
+      <section class="v1-e-kpis" aria-label="مؤشرات نطاق المشروعات المختار">
+        ${v1EThemeKpi('مشتغلون نشطون بالمشروعات',stats.active_workers,'👥','#e39718','أفراد لديهم تسكين نشط داخل النطاق')}
+        ${v1EThemeKpi('المشروعات ضمن الفلتر',stats.projects_count,'📊','#1269bf',statusTitle)}
+        ${v1EThemeKpi('تسكينات الهيكل النشطة',stats.active_assignments,'🔗','#078a70','أفراد مسكنون على أكواد الهيكل')}
+        ${v1EThemeKpi('وحدات الإطار',stats.units,'🗂️','#7952c7','إجمالي الوحدات ضمن المشروعات المختارة')}
+        ${v1EThemeKpi('الاستمارات المسندة',stats.target_forms,'📝','#5269c0','المستهدف الميداني المسند إلى الباحثين')}
+        ${v1EThemeKpi('طلبات تنتظر موافقتك',approvalCount,'📋','#ce4a52','إشعارات شخصية مستقلة عن فلتر المشروعات')}
+      </section>
+      <div class="v1-e-actions" aria-label="إجراءات سريعة">
+        <strong>⚡ إجراءات سريعة</strong>
+        ${['admin','region','followup','office','project_manager'].includes(profile.role)?'<button class="v1-e-action primary" onclick="goToProjects()">📁 مساحات عمل المشروعات</button>':''}
+        ${['admin','region','followup','office','committee'].includes(profile.role)?'<button class="v1-e-action" onclick="goToWorkers()">👥 سجل المشتغلين</button>':''}
+        ${['admin','region','office','project_manager'].includes(profile.role)?'<button class="v1-e-action" onclick="goToRequests()">📋 مركز الطلبات</button>':''}
+        <button class="v1-e-action" onclick="goToGovernorates()">🏛️ المحافظات</button>
+        <button class="v1-e-action" onclick="v11ToggleNotifications()">🔔 الإشعارات <span id="v1-e-dashboard-alert-count" aria-live="polite">${c120N(approvalCount+Number(v1Info.unread||0))}</span></button>
+        <button class="v1-e-action" onclick="c12023RefreshDashboard()">↻ تحديث البيانات</button>
+      </div>
+      <div class="v1-e-layout">
+        <section class="v1-e-panel">
+          <div class="v1-e-panel-head"><h3 class="v1-e-section-title">📁 المشروعات ضمن نطاق التقرير</h3><button class="v1-e-inline-link" onclick="goToProjects()">عرض المشروعات ←</button></div>
+          <div class="v1-e-table-wrap"><table class="v1-e-table"><thead><tr><th>م</th><th>المشروع</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody id="v1-e-project-rows"></tbody></table></div>
+        </section>
+        <section class="v1-e-panel">
+          <div class="v1-e-panel-head"><h3 class="v1-e-section-title">📈 توزيع الحالات في النطاق</h3><span class="v1-e-small">${esc(statusTitle)}</span></div>
+          <div class="v1-e-donut"><div class="v1-e-ring" style="--pct:${projectPct};--ring:#078b73"><span class="v1-e-ring-value">${c120N(projectActive)}<small>مشروع نشط</small></span></div>
+            <div class="v1-e-legend"><div class="v1-e-legend-line"><span class="v1-e-dot" style="--dot:#078b73"></span>نشطة <b>${c120N(projectActive)}</b></div>
+            <div class="v1-e-legend-line"><span class="v1-e-dot" style="--dot:#e0e7ef"></span>حالات أخرى <b>${c120N(Math.max(0,projectCount-projectActive))}</b></div>
+            <div class="v1-e-legend-line"><span>إجمالي المشروعات المحددة</span><b>${c120N(projectCount)}</b></div></div>
+          </div>
+        </section>
+      </div>
+      <div class="v1-e-layout">
+        <section class="v1-e-panel">
+          <div class="v1-e-panel-head"><h3 class="v1-e-section-title">🔔 التنبيهات والموافقات</h3><button class="v1-e-inline-link" onclick="v11ToggleNotifications()">صندوق الإشعارات ←</button></div>
+          <p class="v1-e-small">إشعارات حسابك الشخصية؛ لا تدخل في حساب أرصدة المشروعات.</p>
+          <div class="v1-e-feed" id="v1-e-feed"><div class="v1-e-note">جار تحميل الإشعارات…</div></div>
+        </section>
+        <section class="v1-e-panel">
+          <div class="v1-e-panel-head"><h3 class="v1-e-section-title">✅ الاستيفاء الميداني الكامل</h3><span class="v1-e-small">حسب field_execution_status_v11</span></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><strong style="font:800 29px 'Readex Pro','Tajawal',sans-serif;color:#087c68">${target>0?pct.toFixed(2)+'%':'—'}</strong><span class="v1-e-small">${c120N(completed)} استمارة مستوفاة بالكامل من ${c120N(target)} استمارة مسندة</span></div>
+          <div class="v1-e-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="نسبة استيفاء الاستمارات"><div class="v1-e-progress-fill" style="width:${pct}%"></div></div>
+          <div class="v1-e-metrics">
+            <div class="v1-e-mini"><b>${c120N(stats.partial_forms)}</b><span>استيفاء جزئي</span></div>
+            <div class="v1-e-mini"><b>${c120N(stats.in_progress_forms)}</b><span>جاري الاستيفاء</span></div>
+            <div class="v1-e-mini"><b>${c120N(stats.excluded_forms)}</b><span>مستبعدة</span></div>
+            <div class="v1-e-mini"><b>${c120N(stats.not_started_forms)}</b><span>لم يبدأ</span></div>
+          </div>
+          <div class="v1-e-mini" style="margin-top:14px;padding:12px 14px;border:1px solid #dfe8f0;border-radius:12px;background:#f7fafc">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+              <strong>الاستيفاء الكامل من إجمالي وحدات الإطار</strong>
+              <strong style="color:#087c68">${framePct.toFixed(2)}%</strong>
+            </div>
+            <div class="v1-e-progress" style="margin-top:8px" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${framePct}" aria-label="نسبة الاستيفاء الكامل إلى جميع وحدات الإطار"><div class="v1-e-progress-fill" style="width:${framePct}%"></div></div>
+            <p class="v1-e-small" style="margin:8px 0 0">${c120N(completed)} استمارة مستوفاة بالكامل من أصل ${c120N(units)} وحدة إطار. تختلف هذه النسبة عن نسبة الاستيفاء من الاستمارات المسندة (${pct.toFixed(2)}%).</p>
+          </div>
+          <p class="v1-e-small" style="margin:12px 0 0">حالة وحدات الإطار الإدارية <code>work_units.status=completed</code>: ${c120N(stats.frame_completed_units)} من ${c120N(units)}. هذا حقل مستقل عن حالة استيفاء الاستمارة ولا يستخدم لتحديد الاستيفاء الميداني. تشمل بيانات الاستيفاء جميع الدورات المسجلة؛ راجع الدورة النشطة للمشروعات الدورية.</p>
+        </section>
+      </div>
+      ${admin?`<section class="v1-e-panel"><div class="v1-e-panel-head"><h3 class="v1-e-section-title">💰 إجمالي الصرف المسجل</h3><span class="v1-e-small">حالة المشروعات: ${esc(statusTitle)}</span></div>
+        ${cashAccessible?`<div class="v1-e-metrics v1-e-finance-metrics">
+          <div class="v1-e-mini"><b>${c120N(stats.advances_paid)} ج.م</b><span>سلف مصروفة</span></div>
+          <div class="v1-e-mini"><b>${c120N(stats.other_payments_paid)} ج.م</b><span>مدفوعات أخرى</span></div>
+          <div class="v1-e-mini"><b>${c120N(stats.total_paid)} ج.م</b><span>إجمالي الصرف المسجل</span></div>
+        </div>`:`<div class="v1-e-note">${esc(cashNote)}</div>`}
+        <p class="v1-e-small">${esc(cashNote)}</p>
+      </section>`:''}
+      ${admin?'<section class="v1-e-panel" id="c120AdminStats"><h3 class="v1-e-section-title">👤 إحصائيات حسابات المنصة</h3><p class="v1-e-small">جار تحميل عدد الحسابات (إحصاء عام مستقل عن فلتر المشروعات)…</p></section>':''}
     </div>`;
-  v1EThemeNotifications();
-  console.info('[V11 fast] dashboard KPI rendered in '+Math.round(performance.now()-dashboardT0)+'ms');
-  if(performance.now()-dashboardT0>2500)
-    console.warn('[V11 fast] dashboard RPC latency is still high; inspect c120_dashboard timing in Network/Console.');
-  // Populate only the project selector after the dashboard has already painted.
-  projectsFuture.then(projects=>{
-    if(state.tab!=='dashboard'||renderSequence!==v11FastDashboardSequence)return;
-    if(c120.project&&!projects.some(p=>String(p.id)===String(c120.project))){
-      c120.project='';c120.gov='';renderDashboard();return;
+    v1EThemeRenderProjectRows(c120.project?projects.filter(p=>String(p.id)===String(c120.project)):projects);
+    v1EThemeNotifications();
+    if(admin){
+      adminStatsPromise.then(userStats=>{
+        const el=document.getElementById('c120AdminStats');
+        if(!el||state.tab!=='dashboard'||seq!==v11FastDashboardSequence)return;
+        if(!userStats){el.innerHTML='<h3>📊 إحصائيات الحسابات</h3><p class="v1-e-small">تعذر تحميل إحصاءات الحسابات مؤقتًا.</p>';return;}
+        el.innerHTML=`<h3 class="v1-e-section-title">📊 إحصائيات الحسابات — نطاق المنصة كاملًا</h3><p class="v1-e-small">هذه الأرقام إدارية عامة، وليست مرتبطة بفلتر المشروعات.</p>
+        <div class="stat-row">${[['الإجمالي',userStats.total],['نشط',userStats.active],['معطّل',userStats.inactive],['مشرف عام',userStats.admins],['مسؤول مشروع',userStats.project_managers],['مشرف إقليم',userStats.regions]].map(([label,n])=>`<div class="stat-chip"><div class="num nums">${c120N(n)}</div><div class="lbl">${esc(label)}</div></div>`).join('')}</div>`;
+      }).catch(err=>console.warn('[dashboard scope v2 admin stats]',err));
     }
-    const projectSelect=document.getElementById('c120Project');
-    if(!projectSelect)return;
-    projectSelect.innerHTML=c120Option('','جميع مشروعاتي',c120.project)
-      +projects.map(p=>c120Option(p.id,p.name,c120.project)).join('');
-    projectSelect.disabled=false;
-    projectSelect.removeAttribute('aria-busy');
-    v1EThemeRenderProjectRows(projects);
-    console.info('[V11 fast] active-project filter ready in '+Math.round(performance.now()-dashboardT0)+'ms');
-  }).catch(err=>{
-    if(state.tab!=='dashboard'||renderSequence!==v11FastDashboardSequence)return;
-    const projectSelect=document.getElementById('c120Project');
-    if(projectSelect){
-      projectSelect.innerHTML='<option value="">تعذر تحميل المشروعات النشطة</option>';
-      projectSelect.title=err.message||'';
-    }
-    console.warn('[V11 fast] active-project filter:',err);
-    showToast('تعذر تحميل قائمة المشروعات النشطة؛ حدّث اللوحة لإعادة المحاولة','danger');
-  });
-  if(admin){
-   adminStatsPromise.then(userStats=>{
-    const el=document.getElementById('c120AdminStats');
-    if(!el || state.tab!=='dashboard')return;
-    if(!userStats){el.innerHTML='<h3>📊 إحصائيات المستخدمين</h3><div class="subtle">تعذر تحميل إحصائيات المستخدمين مؤقتًا.</div>';return;}
-    el.innerHTML=`<h3>📊 إحصائيات المستخدمين — المشرف العام</h3>
-    <div class="stat-row">${[
-      ['الإجمالي',userStats.total],['نشط',userStats.active],['معطّل',userStats.inactive],
-      ['مشرف عام',userStats.admins],['مسؤول مشروع',userStats.project_managers],
-      ['مشرف إقليم',userStats.regions]
-    ].map(([label,n])=>`<div class="stat-chip"><div class="num nums">${c120N(n)}</div><div class="lbl">${esc(label)}</div></div>`).join('')}</div>`;
-   }).catch(err=>console.warn('[C120.1] admin statistics:',err));
+    console.info('[dashboard scope v2] '+Math.round(performance.now()-started)+'ms');
+  }catch(e){
+    if(state.tab==='dashboard'&&seq===v11FastDashboardSequence)
+      showError('content','تعذر تحميل المؤشرات الموثقة: '+(e.message||e)+'. تأكد من تثبيت ملف SQL الخاص بلوحة المتابعة على بيئة الاختبار.');
   }
- }catch(e){showError('content',e.message);}
 }
 function c120SetDashboardFilter(which,value){
- if(which==='project'&&value&&!c12026ActiveProjectIds?.has(String(value))){
-   showToast('المشروع غير نشط أو غير متاح لحسابك','danger');return;
- }
- c120[which]=value;
- if(which==='project')c120.gov='';
- renderDashboard();
+  const admin=profile?.role==='admin';
+  if(which==='status'){
+    if(!admin){showToast('فلتر حالات المشروعات للمشرف العام فقط','danger');return;}
+    if(!['active','draft','finished','all'].includes(value))return;
+    c120.status=value;c120.project='';c120.gov='';
+  }else if(which==='project'){
+    if(value&&!c12026ActiveProjectIds?.has(String(value))){showToast('المشروع خارج نطاق العرض المصرح به','danger');return;}
+    c120.project=value;c120.gov='';
+  }else if(which==='gov'){
+    c120.gov=value;
+  }else return;
+  renderDashboard();
 }
 
 async function renderGovernorates(){
