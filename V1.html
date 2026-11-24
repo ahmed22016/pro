@@ -5037,6 +5037,21 @@ function renderGovProjectsTab(gov, projects){
 
 let _workersAllCache = [];
 let _workersProjectsCache = [];
+let _workerAssignmentsToday = [];
+
+function currentWorkersCount(workers, assignments, projectId, today){
+  const visible = new Set(workers.filter(w => w.status !== 'archived').map(w => w.id));
+  const ids = new Set();
+  for(const a of assignments){
+    const p = a.projects;
+    if(!visible.has(a.individual_id) || !p || p.status !== 'active' || a.status !== 'active') continue;
+    if(projectId !== 'all' && a.project_id !== projectId) continue;
+    if(!a.start_date || a.start_date > today || (a.end_date && a.end_date < today)) continue;
+    if((p.start_date && p.start_date > today) || (p.end_date && p.end_date < today)) continue;
+    ids.add(a.individual_id);
+  }
+  return ids.size;
+}
 
 async function renderWorkers(){
   if(!canViewWorkers()) return showError('content', 'غير مصرح لك بالوصول إلى سجل المشتغلين');
@@ -5051,6 +5066,12 @@ async function renderWorkers(){
 
     const { data: projects } = await projectQueryC15(sb.from('projects').select('id, name')).order('name');
 
+    const current = (workers || []).some(w => w.status !== 'archived')
+      ? await fetchAllPagedV11(o => sb.from('assignments')
+          .select('id,individual_id,project_id,status,start_date,end_date,projects!inner(status,start_date,end_date)',o)
+          .eq('status','active').eq('projects.status','active').order('id'))
+      : {data:[],error:null};
+    _workerAssignmentsToday = current.error ? null : current.data;
     _workersAllCache = workers || [];
     _workersProjectsCache = projects || [];
     const all = _workersAllCache;
@@ -5060,8 +5081,7 @@ async function renderWorkers(){
       active: all.filter(w => w.status === 'active').length,
       inactive: all.filter(w => w.status === 'inactive').length,
       archived: all.filter(w => w.status === 'archived').length,
-      rejected: all.filter(w => w.status === 'rejected').length,
-      assigned: all.filter(w => w.current_assignment_id).length
+      rejected: all.filter(w => w.status === 'rejected').length
     };
 
     c.innerHTML = `
@@ -5109,7 +5129,7 @@ async function renderWorkers(){
           <div class="lbl">نشط</div>
         </div>
         <div class="kpi-card teal">
-          <div class="num nums">${fmtNum(stats.assigned)}</div>
+          <div class="num nums" id="workersCurrentlyAssigned">—</div>
           <div class="lbl">مسكَّن حالياً</div>
         </div>
         <div class="kpi-card amber">
@@ -5192,6 +5212,14 @@ function renderWorkersResultsArea(){
   if(!area) return; 
 
   const all = _workersAllCache;
+  const assigned = document.getElementById('workersCurrentlyAssigned');
+  if(assigned){
+    const today = new Intl.DateTimeFormat('sv-SE',{
+      timeZone:'Africa/Cairo',year:'numeric',month:'2-digit',day:'2-digit'
+    }).format(new Date());
+    assigned.textContent = _workerAssignmentsToday === null ? 'غير متاح'
+      : fmtNum(currentWorkersCount(all,_workerAssignmentsToday,state.workerProjectFilter,today));
+  }
 
   let filtered = all;
   if(state.workerFilter !== 'all'){
@@ -6835,6 +6863,13 @@ async function refreshSlotAssignmentCandidates(slotId){
   }
 }
 
+async function assignmentProjectEnd(projectId){
+  const {data,error}=await sb.from('projects').select('end_date').eq('id',projectId).maybeSingle();
+  if(error) throw new Error(error.message);
+  if(!data) throw new Error('تعذر قراءة تاريخ المشروع ضمن صلاحيات الحساب');
+  return data.end_date || '';
+}
+
 async function openCreateAssignmentModal(){
   let slots;
   try {
@@ -6850,6 +6885,10 @@ async function openCreateAssignmentModal(){
   if(slots.length===0){
     return showToast('لا توجد أكواد شاغرة متاحة في نطاقك داخل هذا المشروع','danger');
   }
+
+  let projectEnd;
+  try { projectEnd=await assignmentProjectEnd(state.activeProjectId); }
+  catch(err){ return showToast(err.message,'danger'); }
 
   const modalHtml=`
     <div class="modal-box modal-xl">
@@ -6891,9 +6930,9 @@ async function openCreateAssignmentModal(){
         </div>
         <div class="field">
           <label>تاريخ النهاية
-            <span style="font-weight:400;color:var(--muted);">(فارغ = مفتوح النهاية)</span>
+            <span style="font-weight:400;color:var(--muted);">${projectEnd?'(تاريخ انتهاء المشروع)':'(المشروع بدون تاريخ نهاية)'}</span>
           </label>
-          <input type="date" id="assignEnd" class="input"
+          <input type="date" id="assignEnd" class="input" value="${esc(projectEnd)}" ${projectEnd?'readonly':''}
                  onchange="refreshMainAssignmentCandidates()">
         </div>
       </div>
@@ -9818,6 +9857,10 @@ async function openAssignToSlotModal(slotId){
   try{slot=await c12024FindSlot(slotId);}catch(e){return showToast(e.message,'danger');}
   if(!slot)return showToast('الكود غير موجود ضمن صلاحياتك','danger');
 
+  let projectEnd;
+  try { projectEnd=await assignmentProjectEnd(slot.project_id); }
+  catch(err){ return showToast(err.message,'danger'); }
+
   const modalHtml=`
     <div class="modal-box">
       <h3>تسكين في الكود</h3>
@@ -9834,9 +9877,9 @@ async function openAssignToSlotModal(slotId){
         </div>
         <div class="field">
           <label>تاريخ النهاية
-            <span style="font-weight:400;color:var(--muted);">(فارغ = مفتوح النهاية)</span>
+            <span style="font-weight:400;color:var(--muted);">${projectEnd?'(تاريخ انتهاء المشروع)':'(المشروع بدون تاريخ نهاية)'}</span>
           </label>
-          <input type="date" id="asgn_end" class="input"
+          <input type="date" id="asgn_end" class="input" value="${esc(projectEnd)}" ${projectEnd?'readonly':''}
                  onchange="refreshSlotAssignmentCandidates('${slotId}')">
         </div>
       </div>
@@ -11048,6 +11091,10 @@ async function openQuickAssignModal(workerId){
 
   const hasCurrent = Number(worker.active_assignments_count || 0) > 0;
 
+  let projectEnd;
+  try { projectEnd=await assignmentProjectEnd(state.activeProjectId); }
+  catch(err){ return showToast(err.message,'danger'); }
+
   const modalHtml = `
     <div class="modal-box modal-xl">
       <h3>🔗 تسكين سريع</h3>
@@ -11081,8 +11128,8 @@ async function openQuickAssignModal(workerId){
                  value="${new Date().toISOString().split('T')[0]}">
         </div>
         <div class="field">
-          <label>تاريخ النهاية <span style="font-weight:400;color:var(--muted);">(فارغ = مفتوح النهاية)</span></label>
-          <input type="date" id="qa_end" class="input">
+          <label>تاريخ النهاية <span style="font-weight:400;color:var(--muted);">${projectEnd?'(تاريخ انتهاء المشروع)':'(المشروع بدون تاريخ نهاية)'}</span></label>
+          <input type="date" id="qa_end" class="input" value="${esc(projectEnd)}" ${projectEnd?'readonly':''}>
         </div>
       </div>
 
