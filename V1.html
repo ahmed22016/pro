@@ -2915,7 +2915,10 @@ function isReadOnly(){
   return profile?.role === 'followup';
 }
 
-function canViewWorkers(){ return ['admin','region','office','committee','followup'].includes(profile?.role); }
+function visibleWorkerQuery(query){
+  return isAdmin() ? query : query.neq('status','archived');
+}
+function canViewWorkers(){ return ['admin','project_manager','region','office','committee','followup'].includes(profile?.role); }
 function canCreateWorker(){ return ['admin','region','office'].includes(profile?.role); }
 function canEditWorkerMaster(){ return ['admin','region','office'].includes(profile?.role); }
 function canManageWorkerInterview(){ return profile?.role === 'committee'; }
@@ -2925,8 +2928,8 @@ function canChangeWorkerStatus(){ return profile?.role === 'admin'; }
 function canDeleteWorker(){ return profile?.role === 'admin'; }
 function canImportWorkers(){ return ['admin','region','office'].includes(profile?.role); }
 function canExportWorkers(){ return ['admin','project_manager'].includes(profile?.role); }
-function canViewWorkerAssignments(){ return ['admin','region','office','followup'].includes(profile?.role); }
-function canViewWorkerFinance(){ return ['admin','region','followup'].includes(profile?.role); }
+function canViewWorkerAssignments(){ return ['admin','project_manager','region','office','followup'].includes(profile?.role); }
+function canViewWorkerFinance(){ return ['admin','project_manager','region','followup'].includes(profile?.role); }
 function canUploadWorkerMedia(){ return ['admin','region','office'].includes(profile?.role); }
 
 const WORKER_MEDIA_DEFS = [
@@ -3257,7 +3260,7 @@ async function uploadWorkerMediaFiles(workerId, prefix){
   return uploaded;
 }
 
-function canViewWorkerIdDocuments(){ return ['admin','region','office'].includes(profile?.role); }
+function canViewWorkerIdDocuments(){ return ['admin','project_manager','region','office'].includes(profile?.role); }
 
 async function openWorkerMedia(workerId, mediaType){
   if(mediaType !== 'profile_photo' && !canViewWorkerIdDocuments()){
@@ -3567,7 +3570,7 @@ async function c12022Request(n,p){
     const {data:projects,error}=await sb.from('projects')
       .select('id,name,code,status,start_date,end_date,project_mode,created_at').in('id',ids);
     if(error)throw error;
-    return await Promise.all((projects||[]).map(async project=>{
+    return await Promise.all(visibleProjectsC15(projects).map(async project=>{
       const [d,g]=await Promise.all([
         (p.p_project_id||ids.length===1)?Promise.resolve(scope):callRPC('c120_dashboard',{p_project_id:project.id,p_governorate_id:null}),
         callRPC('c120_governorates',{p_project_id:project.id})
@@ -3864,6 +3867,7 @@ function exportToExcel__impl(sheets, filename){
   const wb = XLSX.utils.book_new();
   sheets.forEach(sheet => {
     const ws = XLSX.utils.json_to_sheet(sheet.rows);
+    if(sheet.columnWidths) ws['!cols']=sheet.columnWidths;
     XLSX.utils.book_append_sheet(wb, ws, sheet.name.substring(0, 31));
   });
   XLSX.writeFile(wb, filename);
@@ -3896,6 +3900,7 @@ async function renderProjectAssignmentsTab(proj){
           </div>
 
           <div style="display:flex;gap:7px;flex-wrap:wrap;">
+            ${assignmentExportButton(proj.id)}
             <button class="btn btn-outline btn-sm"
                     onclick="returnToProjectRC1K('overview')">
               ↩ نظرة عامة
@@ -4473,7 +4478,7 @@ function renderNav(){
 
   addItem('dashboard', 'لوحة المتابعة', '📊', 'goToDashboard()');
 
-  if(['admin','region','followup','office','committee'].includes(role)){
+  if(canViewWorkers()){
     addSection('القسم الأول — المشتغلون', 'domain workers-domain');
     addItem('workers', 'سجل المشتغلين', '👥', 'goToWorkers()');
   }
@@ -4887,7 +4892,7 @@ async function renderGovWorkersTab(gov){
   body.innerHTML = `<div class="empty-rich"><div class="icon"><span class="spinner"></span></div><h3>جارِ التحميل...</h3></div>`;
   
   try {
-    const { data: workers, error } = await fetchAllPagedV11((o)=>sb.from('v_workers_registry').select('*',o).eq('governorate_id', gov.id).order('created_at',{ascending:false}).order('id'));
+    const { data: workers, error } = await fetchAllPagedV11((o)=>visibleWorkerQuery(sb.from('v_workers_registry').select('*',o)).eq('governorate_id', gov.id).order('created_at',{ascending:false}).order('id'));
     
     if(error) throw error;
     
@@ -5060,7 +5065,7 @@ async function renderWorkers(){
   showLoading('content', 'جارِ تحميل المشتغلين...');
 
   try {
-    const { data: workers, error } = await fetchAllPagedV11((o)=>sb.from('v_workers_registry').select('*',o).order('created_at',{ascending:false}).order('id'));
+    const { data: workers, error } = await fetchAllPagedV11((o)=>visibleWorkerQuery(sb.from('v_workers_registry').select('*',o)).order('created_at',{ascending:false}).order('id'));
 
     if(error) throw error;
 
@@ -5160,10 +5165,10 @@ async function renderWorkers(){
                   onclick="setWorkerFilter('inactive')">
             موقوف <span class="count">(${stats.inactive})</span>
           </button>
-          <button class="filter-pill ${state.workerFilter==='archived'?'active':''}" 
+${isAdmin()?`          <button class="filter-pill ${state.workerFilter==='archived'?'active':''}" 
                   onclick="setWorkerFilter('archived')">
             مؤرشف <span class="count">(${stats.archived})</span>
-          </button>
+          </button>`:''}
 
           <input type="text" class="filter-select" id="workerSearchInput"
                  placeholder="🔍 بحث بالاسم/الرقم/الهاتف..." 
@@ -5354,8 +5359,8 @@ async function renderWorkerDetail(){
   showLoading('content', 'جارِ التحميل...');
   
   try {
-    const { data: w, error } = await sb.from('v_workers_registry')
-      .select('*')
+    const { data: w, error } = await visibleWorkerQuery(sb.from('v_workers_registry')
+      .select('*'))
       .eq('id', state.activeWorkerId)
       .maybeSingle();
     
@@ -5578,8 +5583,8 @@ async function renderWorkerDetail(){
 
 async function openWorkerInterviewRequest(workerId){
   if(!canManageWorkerInterview()) return showToast('هذه الصلاحية مخصصة للجنة المقابلة', 'danger');
-  const { data: w, error } = await sb.from('v_workers_registry')
-    .select('id, full_name, interview_done, interview_notes')
+  const { data: w, error } = await visibleWorkerQuery(sb.from('v_workers_registry')
+    .select('id, full_name, interview_done, interview_notes'))
     .eq('id', workerId)
     .maybeSingle();
   if(error || !w) return showToast('تعذر تحميل بيانات المشتغل', 'danger');
@@ -6602,6 +6607,7 @@ async function renderAssignments(){
             </p>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${assignmentExportButton(state.activeProjectId)}
             <button class="btn btn-outline"
                     onclick="returnToProjectRC1K('assignments')">
               ↩ العودة للمشروع
@@ -8458,8 +8464,11 @@ function exportPaymentsExcel(){
 }
 
 function activeProjectsOnlyC15(){ return ['followup','region','office'].includes(profile?.role); }
-function projectQueryC15(query){ return activeProjectsOnlyC15() ? query.eq('status','active') : query; }
-function visibleProjectsC15(rows){ return (rows||[]).filter(p=>!activeProjectsOnlyC15() || p.status==='active'); }
+function projectQueryC15(query){
+  if(activeProjectsOnlyC15()) return query.eq('status','active');
+  return isAdmin() ? query : query.not('status','in','(draft,planning)');
+}
+function visibleProjectsC15(rows){ return (rows||[]).filter(p=>isAdmin() || (activeProjectsOnlyC15() ? p.status==='active' : !!p.status && projectStatusGroupC15(p.status)!=='draft')); }
 // Operational roles see active projects only. Admin and scoped project managers may
 // filter all statuses returned by the server (including draft and finished).
 const projectListC15={status:'all',search:'',sort:'newest',page:1,rows:null,owner:null};
@@ -8476,7 +8485,7 @@ function selectProjectsC15(rows, options){
       String(b.created_at||'').localeCompare(String(a.created_at||'')) || String(a.id).localeCompare(String(b.id)));
 }
 function changeProjectsC15(status){
-  const allowed=activeProjectsOnlyC15()?['active']:['all','active','draft','finished'];
+  const allowed=activeProjectsOnlyC15()?['active']:(isAdmin()?['all','active','draft','finished']:['all','active','finished']);
   projectListC15.status=allowed.includes(status)?status:allowed[0];
   projectListC15.page=1;
   renderProjects(true);
@@ -8529,6 +8538,9 @@ async function loadProjectsDashboardLegacy(){
 }
 
 async function loadProjectsDashboard(){
+  return visibleProjectsC15(await loadProjectDashboardRows());
+}
+async function loadProjectDashboardRows(){
   // The summary RPC can return active projects only. Never treat it as the
   // complete administrative register: read the authoritative projects table.
   if(isAdmin()){
@@ -8583,7 +8595,7 @@ async function renderProjects(useCached=false){
     }
     if(navEpoch!==state.c12023NavEpoch || state.tab!=='projects')return;
 
-    const allowedStatuses=activeProjectsOnlyC15()?['active']:['all','active','draft','finished'];
+    const allowedStatuses=activeProjectsOnlyC15()?['active']:(isAdmin()?['all','active','draft','finished']:['all','active','finished']);
     if(!allowedStatuses.includes(projectListC15.status))projectListC15.status=allowedStatuses[0];
     const all=visibleProjectsC15(projectListC15.rows);
     const matched=selectProjectsC15(all,projectListC15);
@@ -9246,7 +9258,7 @@ async function renderProjectDetail(){
     state.activeProjectCache={...state.activeProjectCache,...data};
   }
   const proj=state.activeProjectCache;
-  if(!proj) return showError('content','المشروع غير موجود');
+  if(!proj || !visibleProjectsC15([proj]).length) return showError('content','المشروع غير متاح لهذا الحساب');
 
   let scope23;
   try {
@@ -9533,6 +9545,7 @@ async function renderProjectStructureTab(proj, govIds){
         <div class="flex-between" style="margin-bottom:14px;">
           <h3 style="margin:0;">🧩 الهيكل التنظيمي — ${(slots||[]).length} خانة · ${(slots||[]).filter(x=>x.individual_id).length} مسكّن · ${(slots||[]).filter(x=>!x.individual_id).length} شاغر</h3>
           <div style="display:flex;gap:8px;">
+            ${assignmentExportButton(proj.id)}
             ${canEdit ? `
               <button class="btn btn-amber btn-sm" onclick="openAddStructureSlotModal('${proj.id}')">
                 + إضافة كود
@@ -10894,13 +10907,8 @@ async function applyImportReview(changes, validNew, isAdminUser, btn){
   }
 }
 
-async function exportWorkersExcel(){
-  if(c1202Restricted())return c1202Deny('تصدير المشتغلين');
-  if(!canExportWorkers()) return showToast('غير مصرح لك بتصدير بيانات المشتغلين', 'danger');
-  const { data, error } = await fetchAllPagedV11((o)=>sb.from('v_workers_registry').select('*',o).order('id'));
-  if(error) return showToast('تعذر: ' + error.message, 'danger');
-  
-  const rows = (data || []).map(w => ({
+function workerExcelFields(w){
+  return {
     'الاسم الرباعي': w.full_name,
     'اليوزر': w.username || '',
     'الرقم القومي': w.national_id,
@@ -10928,9 +10936,85 @@ async function exportWorkersExcel(){
     'الدور': w.project_role ? slotRoleAr(w.project_role) : '',
     ...(canViewWorkerFinance() ? {'إجمالي المصروف': w.total_paid || 0} : {}),
     'تاريخ التسجيل': fmtDate(w.created_at)
-  }));
+  };
+}
+
+async function exportWorkersExcel(){
+  if(c1202Restricted())return c1202Deny('تصدير المشتغلين');
+  if(!canExportWorkers()) return showToast('غير مصرح لك بتصدير بيانات المشتغلين', 'danger');
+  const { data, error } = await fetchAllPagedV11((o)=>visibleWorkerQuery(sb.from('v_workers_registry').select('*',o)).order('id'));
+  if(error) return showToast('تعذر: ' + error.message, 'danger');
+  
+  const rows = (data || []).map(workerExcelFields);
   
   exportToExcel([{name: 'المشتغلون', rows}], 'المشتغلون.xlsx');
+}
+
+function assignmentExportButton(projectId){
+  if(!canExportWorkers()) return '';
+  return `<button class="btn btn-outline btn-sm" onclick="exportAssignmentRoster('${esc(projectId)}',this)">تصدير التسكين Excel</button>`;
+}
+
+async function exportAssignmentRoster(projectId,button){
+  if(!canExportWorkers()) return showToast('غير مصرح بتصدير بيانات المشتغلين','danger');
+  if(button.disabled) return;
+  button.disabled=true;
+  try{
+    const {data:project,error:projectError}=await projectQueryC15(sb.from('projects').select('id,name,code'))
+      .eq('id',projectId).maybeSingle();
+    if(projectError) throw projectError;
+    if(!project) throw new Error('المشروع غير متاح لهذا الحساب');
+    const {data:assignments,error}=await fetchAllPagedV11(options=>sb.rpc('get_active_assignments',{
+      p_project_id:projectId,p_governorate_id:null
+    },options).order('assignment_id'));
+    if(error) throw error;
+    if(!assignments.length) return showToast('لا توجد تسكينات نشطة للتصدير','info');
+
+    const ids=[...new Set(assignments.map(a=>a.individual_id))];
+    const workers=new Map();
+    for(let offset=0;offset<ids.length;offset+=100){
+      const chunk=ids.slice(offset,offset+100);
+      const result=await fetchAllPagedV11(options=>visibleWorkerQuery(sb.from('v_workers_registry')
+        .select('*',options)).in('id',chunk).order('id'));
+      if(result.error) throw result.error;
+      for(const w of result.data) workers.set(w.id,w);
+    }
+    const rows=[];
+    for(const a of assignments){
+      const w=workers.get(a.individual_id);
+      if(!w) throw new Error('تعذر مطابقة أحد التسكينات بسجل مشتغل مرئي. حدّث الصفحة ثم أعد المحاولة.');
+      const details=workerExcelFields(w);
+      delete details['الاسم الرباعي'];
+      delete details['المشروع الحالي'];
+      delete details['الكود'];
+      delete details['الدور'];
+      if(w.total_paid==null) delete details['إجمالي المصروف'];
+      rows.push({
+        'كود الهيكل':String(a.slot_code ?? ''),
+        'اسم المشتغل':w.full_name,
+        'المشروع':project.name,'كود المشروع':String(project.code ?? ''),
+        'محافظة التسكين':a.governorate_name || '', 'دور التسكين':slotRoleAr(a.role),
+        'تاريخ بداية التسكين':a.start_date || '', 'تاريخ نهاية التسكين':a.end_date || '',
+        'حالة التسكين':a.status==='active'?'نشط':(a.status || ''),
+        ...details,
+        'تاريخ انتهاء بطاقة الرقم القومي':w.national_id_expiry_date || '',
+        'القسم / المركز':w.district_name || '', 'المكتب':w.office_name || '',
+        'الأقسام المفضلة':Array.isArray(w.preferred_districts)?w.preferred_districts.join('، '):(w.preferred_districts || ''),
+        'تاريخ المقابلة':w.interviewed_at ? fmtDate(w.interviewed_at) : '',
+        'مصدر التسجيل':w.source || '', 'ملاحظات المراجعة':w.review_note || '',
+        'محظور من العمل مستقبلًا':boolToDisplay(w.banned_from_future),
+        'تاريخ آخر تحديث':w.updated_at ? fmtDate(w.updated_at) : ''
+      });
+    }
+    rows.sort((a,b)=>c1202CodeOrder.compare(a['كود الهيكل'],b['كود الهيكل']));
+    await ensureXLSXV11();
+    const columnWidths=Object.keys(rows[0]).map(key=>({wch:Math.min(48,Math.max(14,key.length+3,...rows.slice(0,50).map(r=>String(r[key] ?? '').length+3)))}));
+    exportToExcel__impl([{name:'تسكين المشروع',rows,columnWidths}],`تسكين_${String(project.code || projectId).replace(/[^\w-]/g,'_')}.xlsx`);
+  }catch(err){
+    showToast('تعذر تصدير التسكين: '+err.message,'danger');
+  }finally{
+    button.disabled=false;
+  }
 }
 
 async function exportProjectStructure(projectId){
@@ -11059,8 +11143,8 @@ async function submitProjectEdit(){
 }
 
 async function openQuickAssignModal(workerId){
-  const { data: worker } = await sb.from('v_workers_registry')
-    .select('id, full_name, status, active_assignments_count, current_project_name')
+  const { data: worker } = await visibleWorkerQuery(sb.from('v_workers_registry')
+    .select('id, full_name, status, active_assignments_count, current_project_name'))
     .eq('id', workerId)
     .maybeSingle();
 
@@ -11263,8 +11347,8 @@ async function submitTransfer(workerId){
 }
 
 async function openDisciplineModal(workerId, workerName, projectId, projectName){
-  const { data: candidates } = await sb.from('v_workers_registry')
-    .select('id, full_name, username')
+  const { data: candidates } = await visibleWorkerQuery(sb.from('v_workers_registry')
+    .select('id, full_name, username'))
     .eq('status', 'active')
     .neq('id', workerId)
     .limit(200);
@@ -11444,7 +11528,7 @@ let _editWorkerOriginal = null;
 
 async function openEditWorkerRequest(workerId){
   if(!canEditWorkerMaster()) return showToast('غير مصرح لك بتعديل بيانات المشتغل', 'danger');
-  const { data: w, error } = await sb.from('v_workers_registry').select('*').eq('id', workerId).maybeSingle();
+  const { data: w, error } = await visibleWorkerQuery(sb.from('v_workers_registry').select('*')).eq('id', workerId).maybeSingle();
   if(error || !w) return showToast('تعذر تحميل بيانات المشتغل', 'danger');
   _editWorkerOriginal = w;
 
@@ -28358,6 +28442,7 @@ function v1EThemeNotifications(){
  el.innerHTML=list.map(r=>`<button class="v1-e-feed-row" onclick="${r.type==='approval'?'v11ToggleNotifications()':`v1OpenInfo('${esc(r.id)}')`}"><span class="v1-e-feed-ico">${r.icon}</span><span style="flex:1;min-width:0"><b>${esc(r.title)}</b><small>${esc(r.description)}</small></span><em>${r.type==='approval'?'يلزم إجراء':'جديد'}</em></button>`).join('');
 }
 function v1EThemeRenderProjectRows(items){
+ items=visibleProjectsC15(items);
  const box=document.getElementById('v1-e-project-rows');if(!box)return;
  const statusText={active:'نشط',draft:'مسودة',planning:'تخطيط',finished:'منتهي',closed:'منتهي'};
  box.innerHTML=items.length?items.slice(0,8).map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.name)}</b></td><td><span class="v1-e-status">● ${esc(statusText[p.status]||p.status||'—')}</span></td><td><button class="v1-e-inline-link" onclick="openProject('${esc(p.id)}','overview')">فتح مساحة العمل ←</button></td></tr>`).join(''):'<tr><td colspan="4" class="v1-e-note">لا توجد مشروعات مطابقة للفلاتر ضمن صلاحياتك.</td></tr>';
@@ -28457,7 +28542,7 @@ async function renderDashboard(){
       <div class="v1-e-actions" aria-label="إجراءات سريعة">
         <strong>⚡ إجراءات سريعة</strong>
         ${['admin','region','followup','office','project_manager'].includes(profile.role)?'<button class="v1-e-action primary" onclick="goToProjects()">📁 مساحات عمل المشروعات</button>':''}
-        ${['admin','region','followup','office','committee'].includes(profile.role)?'<button class="v1-e-action" onclick="goToWorkers()">👥 سجل المشتغلين</button>':''}
+        ${canViewWorkers()?'<button class="v1-e-action" onclick="goToWorkers()">👥 سجل المشتغلين</button>':''}
         ${['admin','region','office','project_manager'].includes(profile.role)?'<button class="v1-e-action" onclick="goToRequests()">📋 مركز الطلبات</button>':''}
         <button class="v1-e-action" onclick="goToGovernorates()">🏛️ المحافظات</button>
         <button class="v1-e-action" onclick="v11ToggleNotifications()">🔔 الإشعارات <span id="v1-e-dashboard-alert-count" aria-live="polite">${c120N(approvalCount+Number(v1Info.unread||0))}</span></button>
