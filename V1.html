@@ -3149,42 +3149,21 @@ function waitMs(ms){
 }
 
 async function getWorkerMediaMarker(workerId, mediaType){
-  const { data, error } = await sb.from('individual_media')
-    .select('drive_file_id, uploaded_at')
-    .eq('individual_id', workerId)
-    .eq('media_type', mediaType)
-    .maybeSingle();
-
-  if(error){
-    throw new Error('تعذر التحقق من سجل الصورة: ' + error.message);
-  }
-
-  return data || null;
-}
-
-async function waitForWorkerMediaRegistration(workerId, mediaType, previousFileId, timeoutMs = 70000){
-  const startedAt = Date.now();
-
-  while(Date.now() - startedAt < timeoutMs){
-    await waitMs(1400);
-
-    const current = await getWorkerMediaMarker(workerId, mediaType);
-
-    if(
-      current?.drive_file_id &&
-      current.drive_file_id !== previousFileId
-    ){
-      return current;
-    }
-  }
-
-  throw new Error(
-    'لم يصل تأكيد رفع الصورة خلال المهلة. افتح Google Apps Script > Executions لمعرفة سبب الرفض.'
-  );
+  const {data, error} = await sb.rpc('get_worker_media_for_view', {
+    p_individual_id: workerId,
+    p_media_type: mediaType
+  });
+  if(error) throw new Error('تعذر التحقق من تسجيل الصورة: ' + error.message);
+  return data?.[0] || null;
 }
 
 async function uploadWorkerMediaViaAppsScript(workerId, mediaType, file){
   assertWorkerMediaAppsScriptReady();
+  const {data: allowed, error} = await sb.rpc('can_upload_worker_media', {
+    p_individual_id: workerId
+  });
+  if(error) throw new Error('تعذر التحقق من صلاحية الرفع: ' + error.message);
+  if(allowed !== true) throw new Error('الحساب الحالي غير مصرح له برفع مستندات هذا المشتغل.');
 
   const { data: { session: currentSession } } = await sb.auth.getSession();
 
@@ -3202,32 +3181,46 @@ async function uploadWorkerMediaViaAppsScript(workerId, mediaType, file){
   const requestId =
     'wm_' + Date.now() + '_' + Math.random().toString(36).slice(2);
 
-  const iframeName = 'wm_iframe_' + requestId;
-  const iframe = document.createElement('iframe');
+  const controller = new AbortController();
+  let responseError = '';
+  const body = new URLSearchParams({
+    action: 'upload',
+    request_id: requestId,
+    access_token: currentSession.access_token,
+    individual_id: workerId,
+    media_type: mediaType,
+    original_name: file.name,
+    mime_type: preparedFile.type,
+    file_base64: base64
+  });
 
-  iframe.name = iframeName;
-  iframe.style.display = 'none';
-  document.body.appendChild(iframe);
-
+  // Google can accept the POST even when its redirected response is unreadable.
+  // Never resend it automatically. Confirm the write via the authorized RPC.
+  fetch(WORKER_MEDIA_APPS_SCRIPT_URL, {
+    method: 'POST', body, credentials: 'omit', signal: controller.signal
+  }).then(async response => {
+    if(!response.ok){
+      responseError = 'خدمة الرفع أعادت خطأ HTTP ' + response.status;
+      return;
+    }
+    if((response.headers.get('content-type') || '').includes('application/json')){
+      const result = await response.json();
+      if(result?.ok === false || result?.success === false || result?.error){
+        responseError = 'رفضت خدمة الرفع تسجيل الملف. راجع سجل التنفيذ.';
+      }
+    }
+  }).catch(() => {});
   try {
-    postWorkerMediaForm({
-      action: 'upload',
-      request_id: requestId,
-      access_token: currentSession.access_token,
-      individual_id: workerId,
-      media_type: mediaType,
-      original_name: file.name,
-      mime_type: preparedFile.type,
-      file_base64: base64
-    }, iframeName);
-
-    return await waitForWorkerMediaRegistration(
-      workerId,
-      mediaType,
-      previousFileId
-    );
+    const deadline = Date.now() + 70000;
+    do {
+      await waitMs(1400);
+      const current = await getWorkerMediaMarker(workerId, mediaType);
+      if(current?.drive_file_id && current.drive_file_id !== previousFileId) return current;
+      if(responseError) throw new Error(responseError);
+    } while(Date.now() < deadline);
+    throw new Error('لم يتأكد تسجيل الصورة. رقم المحاولة: ' + requestId);
   } finally {
-    setTimeout(() => iframe.remove(), 2000);
+    controller.abort();
   }
 }
 
@@ -3254,6 +3247,7 @@ async function uploadWorkerMediaFiles(workerId, prefix){
     }
 
     await uploadWorkerMediaViaAppsScript(workerId, def.key, file);
+    input.value = '';
     uploaded++;
   }
 
@@ -3310,9 +3304,9 @@ function renderWorkerMediaCard(workerId, mediaMap){
       <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:#FAFBFC;">
         <div style="font-weight:700;font-size:13px;">${icon} ${label}</div>
         <div class="subtle" style="margin-top:5px;">
-          ${row ? `مرفوعة · ${fmtDateTime(row.uploaded_at)}` : 'غير مرفوعة'}
+          ${row?.unverified ? 'تعذر التحقق من المستند' : row?.uploaded_at ? `مرفوعة · ${fmtDateTime(row.uploaded_at)}` : row ? 'مرفوعة' : 'غير مرفوعة'}
         </div>
-        ${row && canView ? `
+        ${row && !row.unverified && canView ? `
           <button class="btn btn-outline btn-sm" style="margin-top:9px;"
                   onclick="openWorkerMedia('${workerId}','${type}')">👁️ عرض</button>
         ` : row && !canView ? `
@@ -5392,13 +5386,20 @@ async function renderWorkerDetail(){
     const totalPaid = payments.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
 
     const mediaMap = {};
-    const { data: mediaRows, error: mediaError } = await sb.from('individual_media')
+    const { data: mediaRows } = await sb.from('individual_media')
       .select('media_type, file_name, original_name, mime_type, size_bytes, uploaded_at')
       .eq('individual_id', w.id);
 
-    if(!mediaError){
-      (mediaRows || []).forEach(m => { mediaMap[m.media_type] = m; });
-    }
+    (mediaRows || []).forEach(m => { mediaMap[m.media_type] = m; });
+    await Promise.all(WORKER_MEDIA_DEFS.map(async def => {
+      if(mediaMap[def.key] || (def.key !== 'profile_photo' && !canViewWorkerIdDocuments())) return;
+      try {
+        const row = await getWorkerMediaMarker(w.id, def.key);
+        if(row?.drive_file_id) mediaMap[def.key] = row;
+      } catch {
+        mediaMap[def.key] = {unverified: true};
+      }
+    }));
     
     c.innerHTML = `
       <div class="flex-between" style="margin-bottom:16px;">
@@ -11688,6 +11689,12 @@ async function submitEditWorkerRequest(workerId, isAdminUser){
   try {
     let actionMessage = '';
 
+    let mediaUploaded = 0;
+
+    if(hasMediaFiles){
+      mediaUploaded = await uploadWorkerMediaFiles(workerId, 'ew');
+    }
+
     if(isAdminUser && Object.keys(changes).length){
       const { error } = await sb.from('individuals').update(changes).eq('id', workerId);
       if(error) throw error;
@@ -11705,12 +11712,6 @@ async function submitEditWorkerRequest(workerId, isAdminUser){
 
       if(error) throw error;
       actionMessage = 'تم إرسال طلب التعديل للاعتماد';
-    }
-
-    let mediaUploaded = 0;
-
-    if(hasMediaFiles){
-      mediaUploaded = await uploadWorkerMediaFiles(workerId, 'ew');
     }
 
     closeModal('editWorkerModal');
