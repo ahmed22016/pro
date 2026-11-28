@@ -7066,7 +7066,7 @@ async function submitCreateAssignment(){
         p_reason:notes
       });
       closeModal('createAssignModal');
-      showToast('✅ تم إرسال طلب التسكين لمدير المشروع والمشرف العام','success');
+      showToast('✅ تم إرسال طلب التسكين للمراجعة والاعتماد النهائي','success');
         await refreshPendingCounts();
       await refreshAfterAssignmentChangeRC1K();
       return;
@@ -25872,6 +25872,58 @@ function c12027RefreshFrame(){
   return renderProjectUnitsTab(state.activeProjectCache);
 }
 
+async function openAdminFrameReset(){
+  const proj=state.activeProjectCache;
+  if(profile?.role!=='admin' || !proj || !frameCycleReadyV11(proj)) return;
+  const cycle=frameCycleIdV11(proj);
+  try{
+    const s=await callRPC('preview_frame_reset',{p_project:proj.id,p_cycle:cycle});
+    const modalId='adminFrameReset';
+    showModal(modalId,`<div class="modal"><h3>حذف الإطار بالكامل</h3>
+      <p>${esc(proj.name)} · ${esc(proj.code || '')}${cycle?' · الدورة '+esc(cycle):''}</p>
+      <p>سيتم حذف ${fmtNum(s.units)} استمارة و${fmtNum(s.rows)} صف استيراد ضمن ${fmtNum(s.batches)} دفعة. يشمل ذلك الدفعات المنتظرة للاعتماد.</p>
+      ${s.active?'<p>الحذف متوقف لوجود إسناد أو نشاط على الإطار.</p>':''}
+      <form><label>كلمة مرور حساب المشرف العام<input type="password" class="input" required autocomplete="current-password"></label>
+      <p role="status"></p><div class="flex-end"><button type="button" class="btn btn-outline" onclick="closeModal('adminFrameReset')">إلغاء</button>
+      <button class="btn btn-danger" type="submit" ${s.active||(!s.units&&!s.batches)?'disabled':''}>تأكيد الحذف النهائي</button></div></form></div>`);
+    const modal=document.getElementById(modalId);
+    modal.onclick=null;
+    const form=modal.querySelector('form');
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      const field=form.querySelector('input'), message=form.querySelector('[role=status]');
+      const buttons=Array.from(form.querySelectorAll('button'));
+      if(buttons[1].disabled)return;
+      buttons.forEach(b=>b.disabled=true);
+      let verifier, verified=false, submitted=false;
+      try{
+        const {data,error}=await sb.auth.getUser();
+        if(error || !data.user?.email) throw new Error('أعد تسجيل الدخول');
+        verifier=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{
+          persistSession:false,autoRefreshToken:false,detectSessionInUrl:false,storageKey:'frame-reset-'+s.token
+        }});
+        const result=await verifier.auth.signInWithPassword({email:data.user.email,password:field.value});
+        field.value='';
+        if(result.error || result.data.user?.id!==data.user.id) throw new Error('تعذر تأكيد كلمة المرور للحساب الحالي');
+        verified=true;
+        submitted=true;
+        const response=await verifier.rpc('confirm_frame_reset',{p_token:s.token});
+        if(response.error) throw new Error(response.error.message);
+        closeModal(modalId);
+        showToast('تم حذف '+fmtNum(response.data.units)+' استمارة ودفعات الاستيراد المرتبطة بهذا النطاق','success');
+        if(state.activeProjectCache?.id===proj.id) await c12027RefreshFrame();
+      }catch(e){
+        message.textContent=(e.message || 'تعذر تنفيذ الطلب')+(submitted?' · أغلق النافذة وأعد المعاينة لمعرفة الحالة الحالية.':'');
+      }finally{
+        field.value='';
+        buttons[0].disabled=false;
+        buttons[1].disabled=submitted;
+        if(verified) await verifier.auth.signOut({scope:'local'}).catch(()=>{});
+      }
+    };
+  }catch(e){showToast(e.message || 'تعذر تحميل معاينة الإطار','danger');}
+}
+
 async function renderProjectUnitsTab(proj){
   const body = document.getElementById('projectBody');
 
@@ -25926,6 +25978,7 @@ async function renderProjectUnitsTab(proj){
           </div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${profile?.role==='admin' ? '<button class="btn btn-danger btn-sm" onclick="openAdminFrameReset()">حذف الإطار بالكامل</button>' : ''}
           ${frameV11.canManageImport ? `
             <button class="btn btn-amber btn-sm"
                     onclick="openFrameImportModalV11('${proj.id}')">
@@ -28289,6 +28342,76 @@ async function commitExecutionImportRC1O(batchId){
 // C1.22.4: Project requests & audited reassignment history
 // No direct table writes. All reads/decisions use scoped server RPCs.
 // ================================================================
+const seatingReviewRows=new Map();
+async function loadSeatingReviewRows(){
+  const rows=await callRPC('list_seating_review_requests',{});
+  rows.forEach(r=>seatingReviewRows.set(r.id,r));
+  return rows;
+}
+function seatingReviewButtons(r){
+  const id=r.id;
+  const editable=r.status==='pending' && (r.regional || (profile.role!=='region' && r.can_approve));
+  return `<small>${esc(r.start_date||'')} – ${esc(r.end_date||'—')} · ${r.regional_at?'وافق الإقليم':'بدون موافقة إقليمية'}</small>
+    ${editable?`<button class="btn btn-outline btn-sm" onclick="editSeatingReview('${id}')">تعديل الطلب</button>`:''}
+    ${editable&&r.regional&&!r.regional_at?`<button class="btn btn-success btn-sm" onclick="approveSeatingRegion('${id}')">موافقة الإقليم</button>`:''}
+    ${r.status==='pending'&&r.can_approve&&['admin','project_manager'].includes(profile.role)?`
+    <button class="btn btn-success btn-sm" onclick="finalSeatingReview('${id}',true)">اعتماد نهائي</button>
+    <button class="btn btn-danger-outline btn-sm" onclick="finalSeatingReview('${id}',false)">رفض</button>`:''}
+    ${r.status!=='pending'?esc(v11ReqStatus(r.status)):''}`;
+}
+async function saveSeatingReview(r,action,changes={}){
+  await callRPC('review_pending_seating',{p_id:r.id,p_version:r.version,p_action:action,...changes});
+  c12027InvalidateFrameCache();
+  await refreshPendingCounts();
+  if(state.tab==='project-detail') await renderProjectRequestsV11Tab(state.activeProjectCache);
+  else await renderRequestsHub();
+}
+async function approveSeatingRegion(id){
+  if(!confirm('تسجيل موافقة الإقليم وإبقاء الطلب معلقًا للاعتماد النهائي؟'))return;
+  try{await saveSeatingReview(seatingReviewRows.get(id),'regional_approve');showToast('تم تسجيل موافقة الإقليم','success');}
+  catch(e){showToast(e.message,'danger');}
+}
+async function finalSeatingReview(id,approve){
+  const note=prompt(approve?'ملاحظة الاعتماد النهائي (اختياري)':'سبب الرفض (5 أحرف على الأقل)');
+  if(note===null)return;
+  if(!approve&&note.trim().length<5)return showToast('اكتب سبب الرفض','danger');
+  if(approve&&!confirm('تنفيذ التسكين واعتماد الطلب نهائيًا؟'))return;
+  try{await saveSeatingReview(seatingReviewRows.get(id),approve?'final_approve':'final_reject',{p_reason:note||null});
+    showToast(approve?'تم الاعتماد النهائي':'تم الرفض','success');}catch(e){showToast(e.message,'danger');}
+}
+async function editSeatingReview(id){
+  const r=seatingReviewRows.get(id);
+  showModal('regionalEdit',`<div class="modal"><h3>تعديل طلب التسكين · ${esc(r.code||'')}</h3>
+    <form><label>تاريخ البداية<input class="input" name="start" type="date" required value="${esc(r.start_date||'')}"></label>
+    <label>تاريخ النهاية<input class="input" name="end" type="date" value="${esc(r.end_date||'')}"></label>
+    <label>المشتغل<select class="input" name="worker" required></select></label>
+    <label>ملاحظات الطلب<textarea class="input" name="reason">${esc(r.reason||'')}</textarea></label>
+    <p role="status"></p><div class="flex-end"><button class="btn btn-outline" type="button" onclick="closeModal('regionalEdit')">إلغاء</button>
+    <button class="btn btn-primary" type="submit">حفظ التعديل</button></div></form></div>`);
+  const form=document.querySelector('#regionalEdit form'), f=form.elements;
+  const button=form.querySelector('[type=submit]'),message=form.querySelector('[role=status]');
+  let seq=0;
+  async function candidates(){
+    const version=++seq,selected=f.worker.value||r.individual_id;
+    button.disabled=true;f.worker.innerHTML='';message.textContent='جار فحص المرشحين…';
+    try{
+      const rows=await callRPC('get_slot_candidate_workers_v11',{p_slot_id:r.slot_id,p_start_date:f.start.value,p_end_date:f.end.value||null,p_include_ineligible:false,p_limit:2000});
+      if(version!==seq)return;
+      f.worker.innerHTML=workerCandidateOptions(rows);f.worker.value=selected||'';
+      message.textContent=r.regional_at?'حفظ التعديل يلغي موافقة الإقليم السابقة.':'';
+      button.disabled=false;
+    }catch(e){if(version===seq)message.textContent=e.message;}
+  }
+  f.start.onchange=f.end.onchange=candidates;
+  form.onsubmit=async e=>{
+    e.preventDefault();if(button.disabled)return;button.disabled=true;
+    try{await saveSeatingReview(r,'edit',{p_worker:f.worker.value,p_start:f.start.value,p_end:f.end.value||null,p_reason:f.reason.value});
+      closeModal('regionalEdit');showToast('تم تعديل طلب التسكين','success');}
+    catch(err){message.textContent=err.message;button.disabled=false;}
+  };
+  await candidates();
+}
+
 const v11ProjectRequestUI={section:'seating',reportOffset:0,govId:''};
 function v11ReqDate(v){return v?fmtDateTime(v):'—';}
 function v11ReqStatus(v){return ({pending:'قيد المراجعة',approved:'معتمد',rejected:'مرفوض'})[v]||v||'—';}
@@ -28301,7 +28424,7 @@ async function renderProjectRequestsV11Tab(proj){
   try{
     let rows=[];
     if(section==='seating'){
-      const all=await callRPC('v11_list_seating_requests');
+      const all=await loadSeatingReviewRows();
       rows=(all||[]).filter(r=>r.project_id===proj.id);
     }else if(section==='structure'){
       rows=await callRPC('v11_list_project_structure_requests',{p_project_id:proj.id,p_limit:200});
@@ -28339,6 +28462,7 @@ async function renderProjectRequestsV11Tab(proj){
       if(r.status==='pending'&&r.can_approve){
         buttons='<button class="btn btn-success btn-sm" onclick="v11ProjectReqDecide(\''+section+'\',\''+esc(r.id)+'\',true)">اعتماد</button> <button class="btn btn-danger-outline btn-sm" onclick="v11ProjectReqDecide(\''+section+'\',\''+esc(r.id)+'\',false)">رفض</button>';
       }
+      if(section==='seating' && r.request_type==='assign')buttons=seatingReviewButtons(r);
       return '<tr class="'+(v11Notif.activeRequest===r.id?'v11-focused-request':'')+'"><td>'+esc(kind)+'</td><td>'+esc(details)+'</td><td>'+esc(r.requested_by||'—')+'</td><td class="nums">'+esc(v11ReqDate(date))+'</td><td>'+esc(v11ReqStatus(r.status))+'</td><td>'+buttons+'</td></tr>';
     }).join('');
     const pager=section==='report'?'<div class="flex-end" style="margin-top:12px"><button class="btn btn-outline btn-sm" '+(v11ProjectRequestUI.reportOffset===0?'disabled':'')+' onclick="v11ProjectReqPage(-1)">السابق</button><span class="sub nums">'+(v11ProjectRequestUI.reportOffset+1)+' - '+(v11ProjectRequestUI.reportOffset+(rows||[]).length)+'</span><button class="btn btn-outline btn-sm" '+((rows||[]).length<250?'disabled':'')+' onclick="v11ProjectReqPage(1)">التالي</button></div>':'';
@@ -28691,7 +28815,7 @@ async function renderRequestsHub(){
   const [oldHub,seating]=await Promise.all([
     ['admin','region'].includes(profile.role)?c120Rpc('c120_requests'):
        Promise.resolve({seating:[],structure:[],edits:[],transfers:[]}),
-    callRPC('v11_list_seating_requests',{})
+    loadSeatingReviewRows()
   ]);
   const frame=(v11Notif.visible||[]).filter(x=>x.kind==='frame')
     .map(x=>({id:x.request_id,project:x.project_name,project_id:x.project_id,
@@ -28725,7 +28849,7 @@ async function renderRequestsHub(){
       ${r.reason?`<div>السبب: ${esc(r.reason)}</div>`:''}
       ${r.review_note?`<div>قرار المراجع: ${esc(r.review_note)}</div>`:''}</td>
       <td class="subtle">${c120Date(r.requested_at)}</td>
-      <td>${r.status && r.status!=='pending'
+      <td>${tab==='seating' && r.request_type==='assign' ? seatingReviewButtons(r) : r.status && r.status!=='pending'
         ? `<span class="badge badge-muted">${r.status==='approved'?'معتمد':'مرفوض'}</span>`
         : r.can_approve===false
         ? '<span class="badge badge-muted">بانتظار صاحب الصلاحية</span>'
